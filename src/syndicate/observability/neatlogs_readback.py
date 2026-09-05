@@ -121,13 +121,15 @@ class NeatlogsReadbackReader:
         if not isinstance(metadata, dict):
             raise ValueError("Neatlogs persisted RunLink is missing")
         fields = cast(dict[str, object], metadata)
-        return RunLink.model_validate(
-            {
-                "operation_id": self._text(fields, "operation_id"),
-                "attempt_id": self._text(fields, "attempt_id"),
-                "run_id": self._text(fields, "run_id"),
-                "task_id": self._text(fields, "task_id"),
-            }
+        return RunLink.model_validate_json(
+            json.dumps(
+                {
+                    "operation_id": self._text(fields, "operation_id"),
+                    "attempt_id": self._text(fields, "attempt_id"),
+                    "run_id": self._text(fields, "run_id"),
+                    "task_id": self._text(fields, "task_id"),
+                }
+            )
         )
 
     def _optional_text(self, values: dict[str, object], key: str) -> str | None:
