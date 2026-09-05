@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from syndicate.budget_policy import ProductRole
 
@@ -48,6 +48,8 @@ class TraceSpan(TraceRecord):
     role: ProductRole
     kind: SpanKind
     status: SpanStatus
+    tool_name: str | None = Field(default=None, min_length=1)
+    entity_id: str | None = Field(default=None, min_length=1)
     started_at: AwareDatetime
     ended_at: AwareDatetime
     request: CaptureText
