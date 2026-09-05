@@ -8,8 +8,8 @@ without following symlinks prevent a background rename/symlink race at spawn.
 This constrains the requested cwd, not arbitrary shell filesystem access;
 protected files must be absent/unreadable through the outer sandbox policy.
 
-Each command starts its own process group with anonymous Linux `memfd` capture
-buffers, never named output files or durable trace copies. Foreground receipts
+Each command starts its own process group with OS pipes and bounded Python byte
+buffers, never output files or durable trace copies. Foreground receipts
 retain raw text in memory and immediately release capture descriptors; close and
 cancellation release background buffers. Receipts expose no capture-file paths.
 Background jobs retain a deadline after returning their PID; close is idempotent
@@ -21,9 +21,10 @@ verifier injection, including descendants that used `setsid` to escape groups.
 Backend group cleanup alone is not that security boundary. The UID stop also
 handles abrupt runtime death before backend cleanup can execute.
 
-Compatibility changes: a hard inherited Linux file-size limit bounds each
-regular file written by commands (including capture files); reaching the capture
-limit marks output incomplete. Record the configured limit in runtime baseline
+Compatibility changes: exceeding the per-stream capture byte limit terminates
+the process group and marks output incomplete. Capture never uses files or memfd;
+ordinary task file writes are not restricted by this capture limit. Record the
+configured limit in runtime baseline
 settings. Foreground completion also kills leftover group members; asynchronous
 work must use the explicit background request. No live output callback is added.
 Raw negative return codes retain signal facts; timeout remains a distinct status.

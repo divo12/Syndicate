@@ -3,7 +3,6 @@
 import asyncio
 import os
 import signal
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,25 +10,40 @@ from pathlib import Path
 
 from syndicate.shell import ShellExecution, ShellRequest, ShellStatus
 
-# Limit inherited output files before exec; no preexec_fn in the async runtime.
-_BOOTSTRAP = """import os, resource, sys
-limit = int(sys.argv[1])
-resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
-os.execv('/bin/bash', ['bash', '-c', sys.argv[2]])
-"""
 
+class _Capture:
+    def __init__(self) -> None:
+        self.fd, writer = os.pipe()
+        os.set_blocking(self.fd, False)
+        self.writer = os.fdopen(writer, "wb")
+        self.data = bytearray()
+        self.limited = False
+        self.eof = False
 
-def _capture_fd(name: str) -> int:
-    if sys.platform == "linux":
-        return os.memfd_create(name, os.MFD_CLOEXEC)
-    raise RuntimeError("Anonymous shell capture requires Linux")
+    def drain(self, limit: int) -> None:
+        while not self.limited:
+            try:
+                chunk = os.read(self.fd, 65536)
+            except BlockingIOError:
+                return
+            if not chunk:
+                self.eof = True
+                return
+            remaining = limit - len(self.data)
+            self.data.extend(chunk[:remaining])
+            self.limited = len(chunk) > remaining
+
+    def close(self) -> None:
+        self.writer.close()
+        os.close(self.fd)
+        self.data.clear()
 
 
 @dataclass
 class _Job:
     process: asyncio.subprocess.Process
-    stdout: int
-    stderr: int
+    stdout: _Capture
+    stderr: _Capture
     deadline: asyncio.Task[None] | None = None
     timed_out: bool = False
 
@@ -77,29 +91,31 @@ class ContainerShell:
             os.close(descriptor)
 
     async def _spawn(self, request: ShellRequest, cwd: Path) -> _Job:
-        stdout = _capture_fd("syndicate-stdout")
+        stdout = _Capture()
         try:
-            stderr = _capture_fd("syndicate-stderr")
+            stderr = _Capture()
         except BaseException:
-            os.close(stdout)
+            stdout.close()
             raise
         try:
-            with self._directory_fd(cwd) as cwd_fd:
+            with (
+                self._directory_fd(cwd) as cwd_fd,
+                stdout.writer as out,
+                stderr.writer as err,
+            ):
                 process = await asyncio.create_subprocess_exec(
-                    sys.executable,
+                    "/bin/bash",
                     "-c",
-                    _BOOTSTRAP,
-                    str(self.capture_limit_bytes),
                     request.command,
                     cwd=f"/proc/self/fd/{cwd_fd}",
                     pass_fds=(cwd_fd,),
-                    stdout=stdout,
-                    stderr=stderr,
+                    stdout=out,
+                    stderr=err,
                     start_new_session=True,
                 )
         except BaseException:
-            os.close(stdout)
-            os.close(stderr)
+            stdout.close()
+            stderr.close()
             raise
         job = _Job(process, stdout, stderr)
         self.jobs.append(job)
@@ -113,23 +129,32 @@ class ContainerShell:
         await job.process.wait()
 
     async def _expire(self, job: _Job, timeout_ms: int) -> None:
-        await asyncio.sleep(timeout_ms / 1000)
-        job.timed_out = job.process.returncode is None
+        deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+        # ponytail: 10ms polling; use add_reader if interactive streaming is needed.
+        while job.process.returncode is None:
+            job.stdout.drain(self.capture_limit_bytes)
+            job.stderr.drain(self.capture_limit_bytes)
+            job.timed_out = asyncio.get_running_loop().time() >= deadline
+            if job.timed_out or job.stdout.limited or job.stderr.limited:
+                break
+            await asyncio.sleep(0.01)
         await self._stop(job)
 
     def _receipt(self, job: _Job, background: bool) -> ShellExecution:
-        stdout = os.pread(job.stdout, self.capture_limit_bytes, 0)
-        stderr = os.pread(job.stderr, self.capture_limit_bytes, 0)
-        limited = max(len(stdout), len(stderr)) >= self.capture_limit_bytes
+        job.stdout.drain(self.capture_limit_bytes)
+        job.stderr.drain(self.capture_limit_bytes)
+        limited = job.stdout.limited or job.stderr.limited
         status = ShellStatus.TIMEOUT if job.timed_out else ShellStatus.EXITED
         return ShellExecution(
             status=ShellStatus.BACKGROUND if background else status,
-            stdout=stdout.decode(errors="replace"),
-            stderr=stderr.decode(errors="replace"),
+            stdout=job.stdout.data.decode(errors="replace"),
+            stderr=job.stderr.data.decode(errors="replace"),
             exit_code=None if background else job.process.returncode,
             background_pid=job.process.pid if background else None,
             error="Raw capture limit reached" if limited else None,
-            capture_complete=not (background or limited),
+            capture_complete=not (background or limited)
+            and job.stdout.eof
+            and job.stderr.eof,
         )
 
     async def execute(self, request: ShellRequest, timeout_ms: int) -> ShellExecution:
@@ -143,13 +168,10 @@ class ContainerShell:
             job.deadline = asyncio.create_task(self._expire(job, timeout_ms))
             if request.is_background:
                 return self._receipt(job, background=True)
-            await job.process.wait()
-            await self._stop(job)
-            job.deadline.cancel()
-            await asyncio.gather(job.deadline, return_exceptions=True)
+            await job.deadline
             receipt = self._receipt(job, background=False)
-            os.close(job.stdout)
-            os.close(job.stderr)
+            job.stdout.close()
+            job.stderr.close()
             self.jobs.remove(job)
             return receipt
         except BaseException:
@@ -171,5 +193,5 @@ class ContainerShell:
                 await self._stop(job)
         finally:
             for job in jobs:
-                os.close(job.stdout)
-                os.close(job.stderr)
+                job.stdout.close()
+                job.stderr.close()
