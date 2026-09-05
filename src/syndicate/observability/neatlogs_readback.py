@@ -78,7 +78,7 @@ class NeatlogsReadbackReader:
         persisted_link = self._persisted_link(spans)
         if persisted_link != link:
             raise ValueError("Neatlogs persisted RunLink does not match request")
-        complete = status == "success"
+        complete = False
         return NeatlogsReadbackReceipt(
             link=link,
             trace_ref=trace_id,
