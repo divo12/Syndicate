@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from typing import NewType
+from typing import NewType, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -21,6 +21,8 @@ class ReadbackSpan(BaseModel):
     parent_span_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{16}$")
     node_name: str
     node_type: str
+    input_text: str | None
+    output_text: str | None
 
 
 class NeatlogsReadbackReceipt(BaseModel):
@@ -55,9 +57,11 @@ class NeatlogsReadbackReader:
         )
         try:
             with build_opener(_NoRedirect()).open(request, timeout=10) as response:
-                payload = response.read()
+                payload = response.read(1_000_001)
         except (HTTPError, URLError, OSError) as error:
             raise ValueError("Neatlogs readback unavailable") from error
+        if len(payload) > 1_000_000:
+            raise ValueError("Neatlogs readback exceeds byte limit")
         parsed = json.loads(payload)
         if not isinstance(parsed, dict):
             raise ValueError("Neatlogs readback is not an object")
@@ -71,13 +75,42 @@ class NeatlogsReadbackReader:
             or not isinstance(spans, list)
         ):
             raise ValueError("Neatlogs readback identity is invalid")
-        typed_spans = tuple(ReadbackSpan.model_validate(span) for span in spans)
-        complete = status == "finalized" and count == len(typed_spans)
+        typed_spans = tuple(self._span(span) for span in spans)
+        complete = status == "success" and count == len(typed_spans)
         return NeatlogsReadbackReceipt(
             link=link,
             trace_ref=trace_id,
-            finalized=status == "finalized",
+            finalized=status == "success",
             complete=complete,
             semantic_digest="sha256:" + hashlib.sha256(payload).hexdigest(),
             spans=typed_spans,
         )
+
+    def _span(self, value: object) -> ReadbackSpan:
+        if not isinstance(value, dict):
+            raise ValueError("Neatlogs span is invalid")
+        span = cast(dict[str, object], value)
+        data = span.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("Neatlogs span data is invalid")
+        fields = cast(dict[str, object], data)
+        return ReadbackSpan(
+            span_id=self._text(span, "span_id"),
+            parent_span_id=self._optional_text(span, "parent_span_id"),
+            node_name=self._text(span, "node_name"),
+            node_type=self._text(span, "node_type"),
+            input_text=self._optional_text(fields, "input_value"),
+            output_text=self._optional_text(fields, "output_value"),
+        )
+
+    def _text(self, values: dict[str, object], key: str) -> str:
+        value = values.get(key)
+        if not isinstance(value, str):
+            raise ValueError("Neatlogs text field is invalid")
+        return value
+
+    def _optional_text(self, values: dict[str, object], key: str) -> str | None:
+        value = values.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Neatlogs text field is invalid")
+        return value
