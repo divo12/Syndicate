@@ -17,6 +17,8 @@ def span() -> TraceSpan:
         role=ProductRole.EXECUTOR,
         kind=SpanKind.TOOL,
         status=SpanStatus.OK,
+        tool_name="shell",
+        entity_id="ticket:1",
         started_at=datetime(2026, 9, 6, tzinfo=UTC),
         ended_at=datetime(2026, 9, 6, tzinfo=UTC),
         request=CaptureText(raw="raw command", model_visible="command", complete=True),
@@ -45,5 +47,6 @@ def test_seal_is_immutable_and_reports_missing_spans(tmp_path: Path) -> None:
 
     assert not manifest.complete
     assert manifest.missing_span_ids == (missing,)
+    assert store.read_manifest(original.trace_id) == manifest
     with pytest.raises(ValueError, match="sealed"):
         store.record(original.model_copy(update={"span_id": missing}))
