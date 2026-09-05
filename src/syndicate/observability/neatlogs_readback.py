@@ -75,7 +75,10 @@ class NeatlogsReadbackReader:
         ):
             raise ValueError("Neatlogs readback identity is invalid")
         typed_spans = tuple(self._span(span) for span in spans)
-        complete = False
+        persisted_link = self._persisted_link(spans)
+        if persisted_link != link:
+            raise ValueError("Neatlogs persisted RunLink does not match request")
+        complete = status == "success"
         return NeatlogsReadbackReceipt(
             link=link,
             trace_ref=trace_id,
@@ -107,6 +110,25 @@ class NeatlogsReadbackReader:
         if not isinstance(value, str):
             raise ValueError("Neatlogs text field is invalid")
         return value
+
+    def _persisted_link(self, spans: object) -> RunLink:
+        if not isinstance(spans, list) or not spans:
+            raise ValueError("Neatlogs persisted RunLink is missing")
+        first = spans[0]
+        if not isinstance(first, dict):
+            raise ValueError("Neatlogs persisted RunLink is malformed")
+        metadata = cast(dict[str, object], first).get("span_metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("Neatlogs persisted RunLink is missing")
+        fields = cast(dict[str, object], metadata)
+        return RunLink.model_validate(
+            {
+                "operation_id": self._text(fields, "operation_id"),
+                "attempt_id": self._text(fields, "attempt_id"),
+                "run_id": self._text(fields, "run_id"),
+                "task_id": self._text(fields, "task_id"),
+            }
+        )
 
     def _optional_text(self, values: dict[str, object], key: str) -> str | None:
         value = values.get(key)
