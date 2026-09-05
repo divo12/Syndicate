@@ -63,8 +63,15 @@ class TraceSpan(TraceRecord):
         return self
 
 
+class TraceLink(TraceRecord):
+    operation_id: UUID
+    attempt_id: UUID
+    run_id: UUID
+
+
 class TraceManifest(TraceRecord):
     trace_id: UUID
+    link: TraceLink
     span_ids: tuple[UUID, ...]
     content_hash: str
     complete: bool
