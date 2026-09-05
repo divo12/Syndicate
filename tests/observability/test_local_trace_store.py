@@ -3,9 +3,16 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 from syndicate.budget_policy import ProductRole
-from syndicate.observability.models import CaptureText, SpanKind, SpanStatus, TraceSpan
+from syndicate.observability.models import (
+    CaptureText,
+    SpanKind,
+    SpanStatus,
+    TraceManifest,
+    TraceSpan,
+)
 from syndicate.observability.store import LocalTraceStore
 
 
@@ -69,3 +76,14 @@ def test_empty_trace_seals_an_explicit_all_missing_manifest(tmp_path: Path) -> N
     assert not manifest.complete
     assert manifest.missing_span_ids == (missing,)
     assert store.read_manifest(trace_id) == manifest
+
+
+def test_manifest_rejects_a_naive_sealed_timestamp(tmp_path: Path) -> None:
+    manifest = LocalTraceStore(tmp_path).seal(
+        UUID("66666666-6666-6666-6666-666666666666"), ()
+    )
+
+    with pytest.raises(ValidationError):
+        TraceManifest.model_validate(
+            manifest.model_dump() | {"sealed_at": datetime(2026, 9, 6)}
+        )
