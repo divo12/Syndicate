@@ -1,0 +1,20 @@
+name: Quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.5"
+      - run: uv venv
+      - run: uv pip sync requirements.lock
+      - run: uv pip install --no-deps --no-build-isolation -e .
+      - run: .venv/bin/python scripts/quality.py
