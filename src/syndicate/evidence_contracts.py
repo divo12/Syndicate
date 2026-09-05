@@ -1,5 +1,6 @@
 """Citation contracts: remote Neatlogs IDs are not controller run UUIDs."""
 
+import hashlib
 from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
@@ -46,3 +47,68 @@ class EvidenceGrant(EvidenceModel):
 class CitationValidation(EvidenceModel):
     status: EvidenceStatus
     complete: bool
+
+
+class TraceCursor(EvidenceModel):
+    semantic_digest: str
+    query_hash: str
+    offset: int = Field(ge=0)
+
+
+class TraceQuery(EvidenceModel):
+    run_id: UUID
+    trace_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text: str = Field(default="", max_length=200)
+    node_name: str | None = None
+    node_type: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+    cursor: TraceCursor | None = None
+
+    @property
+    def content_hash(self) -> str:
+        return hashlib.sha256(
+            self.model_dump_json(exclude={"cursor"}).encode()
+        ).hexdigest()
+
+
+class SearchPage(EvidenceModel):
+    status: EvidenceStatus
+    complete: bool
+    span_refs: tuple[str, ...] = ()
+    has_more: bool = False
+    truncated: bool = False
+    next_cursor: TraceCursor | None = None
+
+
+class SpanQuery(SpanCitation):
+    before: int = Field(default=1, ge=0, le=5)
+    after: int = Field(default=1, ge=0, le=5)
+    offset: int = Field(default=0, ge=0)
+    max_chars: int = Field(default=1000, ge=1, le=2000)
+
+
+class TextExcerpt(EvidenceModel):
+    text: str | None
+    next_offset: int | None
+    truncated: bool
+
+
+class SpanExcerpt(EvidenceModel):
+    span_ref: str
+    input: TextExcerpt
+    output: TextExcerpt
+
+
+class SpanContext(EvidenceModel):
+    status: EvidenceStatus
+    complete: bool
+    spans: tuple[SpanExcerpt, ...] = ()
+
+
+class ManifestOverview(EvidenceModel):
+    status: EvidenceStatus
+    complete: bool
+    link: RunLink | None = None
+    trace_ref: str
+    semantic_digest: str | None = None
+    span_count: int = 0
