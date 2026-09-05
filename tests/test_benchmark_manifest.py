@@ -1,6 +1,8 @@
 import subprocess
+from collections.abc import Iterator
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -12,7 +14,7 @@ def git(root: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def checkout(tmp_path: Path) -> tuple[Path, str]:
+def checkout(tmp_path: Path) -> Iterator[tuple[Path, str]]:
     git(tmp_path, "init", "-q")
     for name in ("task-a-1", "task-b", "task-c"):
         task = tmp_path / "tasks" / name
@@ -47,20 +49,23 @@ docker_image = "image:declared"
         "-qm",
         "fixture",
     )
-    return tmp_path, git(tmp_path, "rev-parse", "HEAD")
+    revision = git(tmp_path, "rev-parse", "HEAD")
+    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+        yield tmp_path, revision
 
 
 def load(checkout: tuple[Path, str]) -> BenchmarkManifest:
     root, revision = checkout
-    return BenchmarkManifest.load(
-        root,
-        revision,
-        (
-            Assignment("task-a-1", Split.DEVELOPMENT, "a"),
-            Assignment("task-b", Split.VALIDATION, "b"),
-            Assignment("task-c", Split.FINAL_TEST, "c"),
-        ),
-    )
+    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+        return BenchmarkManifest.load(
+            root,
+            revision,
+            (
+                Assignment("task-a-1", Split.DEVELOPMENT, "a"),
+                Assignment("task-b", Split.VALIDATION, "b"),
+                Assignment("task-c", Split.FINAL_TEST, "c"),
+            ),
+        )
 
 
 def test_public_projection_is_immutable_and_split_scoped(
@@ -198,7 +203,8 @@ def test_original_instruction_whitespace_preserved(checkout: tuple[Path, str]) -
         "goal",
     )
     manifest = load((root, git(root, "rev-parse", "HEAD")))
-    assert manifest.public_inputs(Split.DEVELOPMENT)[0].instruction == "  Goal\n\n"
+    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", manifest.revision):
+        assert manifest.public_inputs(Split.DEVELOPMENT)[0].instruction == "  Goal\n\n"
 
 
 def test_manifest_hash_pins_assignments(checkout: tuple[Path, str]) -> None:
@@ -216,3 +222,27 @@ def test_manifest_hash_pins_assignments(checkout: tuple[Path, str]) -> None:
         ),
     )
     assert changed.content_hash != manifest.content_hash
+
+
+def test_canonical_pin_rejects_clean_alternate_head(checkout: tuple[Path, str]) -> None:
+    from dataclasses import replace
+
+    root, revision = checkout
+    manifest = load(checkout)
+    git(
+        root,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "alternate",
+    )
+    alternate = git(root, "rev-parse", "HEAD")
+    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+        with pytest.raises(ValueError, match="canonical"):
+            BenchmarkManifest.load(root, alternate, (manifest.tasks[0].assignment,))
+        with pytest.raises(ValueError, match="canonical"):
+            replace(manifest, revision=alternate).public_inputs(Split.DEVELOPMENT)

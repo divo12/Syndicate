@@ -71,8 +71,8 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _check_checkout(root: Path, revision: str) -> None:
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Full pinned Git revision required")
+    if revision != ITSMBENCH_REVISION:
+        raise ValueError("Benchmark revision must match canonical ITSMBench pin")
     if _git(root, "rev-parse", "HEAD").strip() != revision:
         raise ValueError("Benchmark revision mismatch")
     if _git(root, "status", "--porcelain", "--untracked-files=all", "--ignored"):
@@ -165,6 +165,9 @@ class BenchmarkManifest:
 
     Git tree IDs pin protected content without reading answers. Declared image
     tags are metadata, not resolved runtime digests. Campaign budgets are separate.
+    load() is trusted controller construction from operator-declared assignments.
+    The frozen tuple and content_hash seal that declaration; later campaign
+    admission must compare against its retained approved hash, not redeclare splits.
     """
 
     root: Path
