@@ -3,10 +3,12 @@
 import hashlib
 from enum import StrEnum
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from syndicate.budget_policy import BudgetCap
+from syndicate.evidence_contracts import Citation
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 
@@ -119,3 +121,69 @@ class JudgeSpec(JudgeDraft):
     @property
     def spec_hash(self) -> str:
         return hashlib.sha256(self.model_dump_json().encode()).hexdigest()
+
+
+class ReportStatus(StrEnum):
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+
+
+class FindingCategory(StrEnum):
+    UNSUPPORTED_CLAIM = "unsupported_claim"
+    WRONG_ENTITY = "wrong_entity"
+    WRONG_OPERATION = "wrong_operation"
+    WRONG_ARGUMENTS = "wrong_arguments"
+    MISSED_RECORDS = "missed_records"
+    POLICY_CONTRADICTION = "policy_contradiction"
+    INEFFECTIVE_CHANGE = "ineffective_change"
+    RECOVERED_ERROR = "recovered_error"
+    REDUNDANT_WORK = "redundant_work"
+    SUCCESSFUL_STRATEGY = "successful_strategy"
+
+
+class Finding(JudgeObject):
+    finding_id: Text
+    category: FindingCategory
+    observation: Text
+    hypothesis: Text | None = None
+    evidence: tuple[Citation, ...] = Field(min_length=1)
+
+
+class RunCoverage(JudgeObject):
+    run_id: UUID
+    examined: tuple[Citation, ...] = ()
+    unread_relevant: tuple[Citation, ...] = ()
+
+    @model_validator(mode="after")
+    def same_run(self) -> Self:
+        if any(
+            ref.run_id != self.run_id for ref in self.examined + self.unread_relevant
+        ):
+            raise ValueError("Coverage reference belongs to another run")
+        return self
+
+
+class ReportDraft(JudgeObject):
+    """Model findings supplement the trusted verifier; no reward field is accepted."""
+
+    run_ids: tuple[UUID, ...] = Field(min_length=1)
+    status: ReportStatus
+    findings: tuple[Finding, ...] = ()
+    unresolved_questions: tuple[Text, ...] = ()
+    coverage: tuple[RunCoverage, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_identifiers(self) -> Self:
+        groups = (
+            self.run_ids,
+            tuple(item.run_id for item in self.coverage),
+            tuple(item.finding_id for item in self.findings),
+        )
+        if any(len(set(group)) != len(group) for group in groups):
+            raise ValueError("Duplicate report identifier")
+        return self
+
+
+class TaskReport(ReportDraft):
+    task_id: Text
+    judge_spec_hash: Text

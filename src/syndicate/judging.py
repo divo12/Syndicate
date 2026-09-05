@@ -2,7 +2,17 @@
 
 from collections.abc import Callable
 
-from syndicate.judge_contracts import JudgeBuildRequest, JudgeDraft, JudgeSpec
+from syndicate.evidence import EvidenceReader
+from syndicate.evidence_contracts import Citation, EvidenceStatus
+from syndicate.judge_contracts import (
+    CriterionStatus,
+    JudgeBuildRequest,
+    JudgeDraft,
+    JudgeSpec,
+    ReportDraft,
+    ReportStatus,
+    TaskReport,
+)
 
 BUILDER_PROMPT = """Generate criteria from only the supplied public goal, policy,
 tool metadata and public criterion references. Quote exact supporting text and
@@ -77,3 +87,76 @@ class JudgeRegistry:
         )
         self.specs += (spec,)
         return spec
+
+
+def _validate_report_refs(
+    reader: EvidenceReader, draft: ReportDraft, examined: tuple[Citation, ...]
+) -> None:
+    _validate_report_scope(reader, draft)
+    references = tuple(ref for finding in draft.findings for ref in finding.evidence)
+    references += tuple(ref for coverage in draft.coverage for ref in coverage.examined)
+    for reference in references:
+        if reference not in examined:
+            raise ValueError("Report cites evidence the invocation has not examined")
+        result = reader.validate_citation(reference)
+        if result.status is not EvidenceStatus.RESOLVED or not result.complete:
+            raise ValueError("Report citation is missing, incomplete or unauthorized")
+
+
+def validate_report(
+    spec: JudgeSpec,
+    reader: EvidenceReader,
+    draft: ReportDraft,
+    examined: tuple[Citation, ...],
+) -> TaskReport:
+    """Recheck remote evidence, retaining only IDs and findings, never payloads.
+
+    The runtime supplies examined IDs; the model cannot declare its own access
+    history. Resolution establishes existence/alignment, not semantic support.
+    Controller-bound reader grants define this task's complete assigned run set.
+    """
+    if any(grant.link.task_id != spec.task_id for grant in reader.grants):
+        raise ValueError("Reader grant belongs to another task")
+    _validate_report_refs(reader, draft, examined)
+    unresolved = list(draft.unresolved_questions + _coverage_gaps(reader, draft))
+    if any(
+        criterion.status is CriterionStatus.UNRESOLVED for criterion in spec.criteria
+    ):
+        unresolved.append("Judge rubric has unresolved public requirements")
+    status = ReportStatus.INCOMPLETE if unresolved else draft.status
+    if status is ReportStatus.INCOMPLETE and not unresolved:
+        unresolved.append("Judge investigation terminated incomplete")
+    return TaskReport(
+        task_id=spec.task_id,
+        judge_spec_hash=spec.spec_hash,
+        run_ids=draft.run_ids,
+        status=status,
+        findings=draft.findings,
+        unresolved_questions=tuple(unresolved),
+        coverage=draft.coverage,
+    )
+
+
+def _validate_report_scope(reader: EvidenceReader, draft: ReportDraft) -> None:
+    assigned = {grant.link.run_id for grant in reader.grants}
+    if (
+        set(draft.run_ids) != assigned
+        or {coverage.run_id for coverage in draft.coverage} != assigned
+    ):
+        raise ValueError("Report must account for all assigned runs")
+
+
+def _coverage_gaps(reader: EvidenceReader, draft: ReportDraft) -> tuple[str, ...]:
+    unresolved: list[str] = []
+    for grant in reader.grants:
+        manifest = reader.get_trace_manifest(grant.link.run_id, grant.trace_ref)
+        if manifest.status is not EvidenceStatus.RESOLVED or not manifest.complete:
+            unresolved.append(
+                f"Neatlogs evidence incomplete for run {grant.link.run_id}"
+            )
+    for coverage in draft.coverage:
+        if not coverage.examined or coverage.unread_relevant:
+            unresolved.append(
+                f"Investigation coverage incomplete for run {coverage.run_id}"
+            )
+    return tuple(unresolved)
