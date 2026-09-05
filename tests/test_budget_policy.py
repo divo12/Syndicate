@@ -21,7 +21,7 @@ def policy() -> CampaignBudgetPolicy:
     role_budgets = tuple(RoleBudget(role=role, cap=cap()) for role in ProductRole)
     return CampaignBudgetPolicy(
         role_budgets=role_budgets,
-        campaign_cap=cap(tokens=400, seconds=240, spend=4_000),
+        campaign_cap=cap(),
     )
 
 
@@ -41,7 +41,7 @@ def test_caps_reject_missing_unbounded_or_invalid_values(field: str) -> None:
             BudgetCap.model_validate(values)
 
 
-def test_policy_rejects_missing_role_and_inconsistent_totals() -> None:
+def test_policy_rejects_missing_role_and_role_cap_above_campaign_cap() -> None:
     role_budgets = tuple(
         RoleBudget(role=role, cap=cap())
         for role in ProductRole
@@ -54,5 +54,5 @@ def test_policy_rejects_missing_role_and_inconsistent_totals() -> None:
             role_budgets=tuple(
                 RoleBudget(role=role, cap=cap()) for role in ProductRole
             ),
-            campaign_cap=cap(tokens=399, seconds=240, spend=4_000),
+            campaign_cap=cap(tokens=99),
         )

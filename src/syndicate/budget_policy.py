@@ -24,6 +24,13 @@ class BudgetCap(BaseModel):
     max_seconds: int = Field(gt=0)
     max_spend_microusd: int = Field(gt=0)
 
+    def fits_within(self, ceiling: Self) -> bool:
+        return (
+            self.max_tokens <= ceiling.max_tokens
+            and self.max_seconds <= ceiling.max_seconds
+            and self.max_spend_microusd <= ceiling.max_spend_microusd
+        )
+
 
 class RoleBudget(BaseModel):
     """A bounded allowance assigned to exactly one product role."""
@@ -46,15 +53,9 @@ class CampaignBudgetPolicy(BaseModel):
     def validate_totals(self) -> Self:
         if tuple(item.role for item in self.role_budgets) != tuple(ProductRole):
             raise ValueError("Role budgets must cover each product role exactly once")
-        role_total = BudgetCap(
-            max_tokens=sum(item.cap.max_tokens for item in self.role_budgets),
-            max_seconds=sum(item.cap.max_seconds for item in self.role_budgets),
-            max_spend_microusd=sum(
-                item.cap.max_spend_microusd for item in self.role_budgets
-            ),
-        )
-        if role_total != self.campaign_cap:
-            raise ValueError("Campaign cap must equal the total of role caps")
+        for item in self.role_budgets:
+            if not item.cap.fits_within(self.campaign_cap):
+                raise ValueError("Role cap must fit within the campaign cap")
         return self
 
     def budget_for(self, role: ProductRole) -> BudgetCap:
