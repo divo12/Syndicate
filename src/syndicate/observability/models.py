@@ -1,6 +1,5 @@
 """Typed local evidence records; captured text is data, never instructions."""
 
-from datetime import datetime
 from enum import StrEnum
 from typing import Self
 from uuid import UUID
@@ -71,4 +70,4 @@ class TraceManifest(TraceRecord):
     complete: bool
     missing_span_ids: tuple[UUID, ...]
     missing_reasons: tuple[str, ...]
-    sealed_at: datetime
+    sealed_at: AwareDatetime
