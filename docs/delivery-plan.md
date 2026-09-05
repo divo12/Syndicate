@@ -133,7 +133,7 @@ Intermediate review nodes are omitted from the large DAG for readability; the ca
 
 ## M2 T2 task-judge integration status
 
-P14 [PR #9](https://github.com/divo12/Syndicate/pull/9) provides schema/public-provenance validation and pinned specifications. Historical head `a7cdf16` is superseded by `37d70a5`; this is separate from P15 integration and does not establish semantic judge validity.
+P14 [PR #9](https://github.com/divo12/Syndicate/pull/9) provides schema/public-provenance validation and pinned specifications. Historical head `a7cdf16` is superseded by `6a7c6df`; this is separate from P15 integration and does not establish semantic judge validity.
 
 P15a [PR #13](https://github.com/divo12/Syndicate/pull/13) provides typed reports and authorized citation validation through worker7. P15b [PR #16](https://github.com/divo12/Syndicate/pull/16) has the single-attempt boundary, unchanged controller verifier/usage references and ID/offset read ledger. The ledger enforces which spans were fully read through worker7, retaining IDs/offsets only; it is not a second query layer. P15c concrete NexAU execution reuses worker9's runtime; worker7 owns evidence resolution, and worker11 owns verified remote readback. Do not duplicate those implementations.
 
