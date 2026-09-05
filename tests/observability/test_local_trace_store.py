@@ -47,6 +47,13 @@ def test_seal_is_immutable_and_reports_missing_spans(tmp_path: Path) -> None:
 
     assert not manifest.complete
     assert manifest.missing_span_ids == (missing,)
+    assert manifest.missing_reasons == (f"missing-span:{missing}",)
     assert store.read_manifest(original.trace_id) == manifest
+    span_path = tmp_path / str(original.trace_id) / f"{original.span_id}.json"
+    span_path.write_text(
+        original.model_copy(update={"response": original.request}).model_dump_json()
+    )
+    with pytest.raises(ValueError, match="content hash"):
+        store.read_manifest(original.trace_id)
     with pytest.raises(ValueError, match="sealed"):
         store.record(original.model_copy(update={"span_id": missing}))
