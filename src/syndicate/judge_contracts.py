@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from syndicate.budget_policy import BudgetCap
-from syndicate.evidence_contracts import Citation
+from syndicate.evidence_contracts import Citation, RecordCitation, SpanCitation
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 
@@ -187,3 +187,16 @@ class ReportDraft(JudgeObject):
 class TaskReport(ReportDraft):
     task_id: Text
     judge_spec_hash: Text
+    verifier_refs: tuple[RecordCitation, ...] = ()
+    usage_ref: Text | None = None
+
+
+class JudgeAttempt(JudgeObject):
+    output_json: str
+    examined: tuple[Citation, ...]
+
+
+class SpanReadPage(JudgeObject):
+    citation: SpanCitation
+    offset: int = Field(ge=0)
+    next_offset: int | None = Field(default=None, gt=0)
