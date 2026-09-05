@@ -1,12 +1,13 @@
 """Pin exact AHE seed inputs; preparation does not certify runnable H0."""
 
+import datetime
 import hashlib
 import json
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from syndicate.model_config import ModelSettings
 
@@ -50,6 +51,23 @@ class BaselineStage(StrEnum):
     PREPARED = "prepared"
 
 
+class PromptVariables(BaseModel):
+    """Controller-pinned pair inputs; never resolve these from host state."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    date: datetime.date
+    username: str = Field(pattern=r"^[^\s{}]+$")
+    working_directory: str = Field(pattern=r"^/[^\r\n{}]*$")
+
+    def render(self, template: str) -> str:
+        return (
+            template.replace("{{ date }}", self.date.isoformat())
+            .replace("{{ username }}", self.username)
+            .replace("{{ working_directory }}", self.working_directory)
+        )
+
+
 class BaselineManifest(BaseModel):
     """Preparation receipt, not verified H0."""
 
@@ -69,6 +87,8 @@ class BaselineManifest(BaseModel):
     compatibility_diff: Literal[""] = ""
     framework_lock_sha256: str
     model: ModelSettings
+    prompt_variables: PromptVariables
+    rendered_prompt: str
 
     @property
     def identity_hash(self) -> str:
@@ -79,7 +99,10 @@ class BaselineManifest(BaseModel):
 
 
 def prepare_baseline(
-    seed_dir: Path, framework_lock: Path, model: ModelSettings
+    seed_dir: Path,
+    framework_lock: Path,
+    model: ModelSettings,
+    prompt_variables: PromptVariables,
 ) -> BaselineManifest:
     """Verify vendored bytes and bind their identity to model settings and lock bytes.
 
@@ -100,4 +123,8 @@ def prepare_baseline(
         artifacts=SEED_ARTIFACTS,
         framework_lock_sha256=hashlib.sha256(framework_lock.read_bytes()).hexdigest(),
         model=model,
+        prompt_variables=prompt_variables,
+        rendered_prompt=prompt_variables.render(
+            (seed_dir / "systemprompt.md").read_text(encoding="utf-8")
+        ),
     )
