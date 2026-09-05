@@ -61,7 +61,9 @@ class SandboxShell(Protocol):
 
     execute must run bash only in the owned task sandbox, enforce timeout_ms,
     respect cancellation, and reject nonexistent/out-of-workspace directories.
-    close must idempotently reap all owned processes, including background children.
+    close must idempotently stop/reap owned process groups and report failure.
+    Before verification, the adapter must independently confirm whole-trial UID
+    cleanup, including descendants that escaped groups with setsid.
     """
 
     async def execute(
