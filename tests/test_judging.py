@@ -62,6 +62,11 @@ def test_generation_pins_first_spec_and_never_learns_from_later_results() -> Non
     assert spec.model == "gpt-5.4-mini"
     assert len(spec.spec_hash) == 64
     assert "No source" in spec.prompt
+    assert "Neatlogs is the only durable trace source" in spec.prompt
+    assert (
+        "missing or incomplete Neatlogs evidence requires an incomplete report"
+        in spec.prompt
+    )
 
 
 def test_invalid_support_is_rejected_without_sealing() -> None:
