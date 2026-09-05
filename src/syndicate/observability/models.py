@@ -70,4 +70,5 @@ class TraceManifest(TraceRecord):
     content_hash: str
     complete: bool
     missing_span_ids: tuple[UUID, ...]
+    missing_reasons: tuple[str, ...]
     sealed_at: datetime
