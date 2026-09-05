@@ -20,3 +20,10 @@ its LLM environment placeholders, 200K context, 32K output, sampling settings,
 P07 supplies sandbox shell behavior; the runner must record its explicit runtime
 compatibility diff and verified limits before sealing H0 (BASE-01/BASE-02).
 The prepared identity is not a final H0 hash or evidence of a model-backed run.
+
+The controller must pass `PromptVariables(date=..., username=...,
+working_directory=...)` as the fourth `prepare_baseline` argument. No host clock,
+login name or current directory is consulted. Reuse the same frozen variables
+for both arms of a pair. The manifest records variables and exact rendered text;
+both participate in `identity_hash`. Persist that receipt before dispatch and use
+`rendered_prompt` directly; do not rerender it with runtime host defaults.
