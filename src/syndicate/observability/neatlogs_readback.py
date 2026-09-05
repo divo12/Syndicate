@@ -68,7 +68,6 @@ class NeatlogsReadbackReader:
         trace_id = parsed.get("_id")
         status = parsed.get("status")
         spans = parsed.get("spans")
-        count = parsed.get("spanCount")
         if (
             not isinstance(trace_id, str)
             or trace_id != trace_ref
@@ -76,7 +75,7 @@ class NeatlogsReadbackReader:
         ):
             raise ValueError("Neatlogs readback identity is invalid")
         typed_spans = tuple(self._span(span) for span in spans)
-        complete = status == "success" and count == len(typed_spans)
+        complete = False
         return NeatlogsReadbackReceipt(
             link=link,
             trace_ref=trace_id,
