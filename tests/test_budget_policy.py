@@ -41,14 +41,18 @@ def test_caps_reject_missing_unbounded_or_invalid_values(field: str) -> None:
             BudgetCap.model_validate(values)
 
 
-def test_policy_rejects_missing_role_and_role_cap_above_campaign_cap() -> None:
-    role_budgets = tuple(
-        RoleBudget(role=role, cap=cap())
-        for role in ProductRole
-        if role is not ProductRole.TASK_JUDGE
+def test_policy_rejects_duplicate_role_that_omits_another_role() -> None:
+    role_budgets = (
+        RoleBudget(role=ProductRole.EXECUTOR, cap=cap()),
+        RoleBudget(role=ProductRole.JUDGE_BUILDER, cap=cap()),
+        RoleBudget(role=ProductRole.TASK_JUDGE, cap=cap()),
+        RoleBudget(role=ProductRole.EXECUTOR, cap=cap()),
     )
     with pytest.raises(ValidationError):
         CampaignBudgetPolicy(role_budgets=role_budgets, campaign_cap=cap())
+
+
+def test_policy_rejects_role_cap_above_campaign_cap() -> None:
     with pytest.raises(ValidationError):
         CampaignBudgetPolicy(
             role_budgets=tuple(
