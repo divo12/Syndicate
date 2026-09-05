@@ -4,7 +4,6 @@ import asyncio
 import os
 import signal
 import sys
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -20,11 +19,17 @@ os.execv('/bin/bash', ['bash', '-c', sys.argv[2]])
 """
 
 
+def _capture_fd(name: str) -> int:
+    if sys.platform == "linux":
+        return os.memfd_create(name, os.MFD_CLOEXEC)
+    raise RuntimeError("Anonymous shell capture requires Linux")
+
+
 @dataclass
 class _Job:
     process: asyncio.subprocess.Process
-    stdout: Path
-    stderr: Path
+    stdout: int
+    stderr: int
     deadline: asyncio.Task[None] | None = None
     timed_out: bool = False
 
@@ -72,25 +77,30 @@ class ContainerShell:
             os.close(descriptor)
 
     async def _spawn(self, request: ShellRequest, cwd: Path) -> _Job:
-        capture_dir = Path(tempfile.mkdtemp(prefix="syndicate-shell-"))
-        stdout, stderr = capture_dir / "stdout", capture_dir / "stderr"
-        with (
-            self._directory_fd(cwd) as cwd_fd,
-            stdout.open("xb") as out,
-            stderr.open("xb") as err,
-        ):
-            process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-c",
-                _BOOTSTRAP,
-                str(self.capture_limit_bytes),
-                request.command,
-                cwd=f"/proc/self/fd/{cwd_fd}",
-                pass_fds=(cwd_fd,),
-                stdout=out,
-                stderr=err,
-                start_new_session=True,
-            )
+        stdout = _capture_fd("syndicate-stdout")
+        try:
+            stderr = _capture_fd("syndicate-stderr")
+        except BaseException:
+            os.close(stdout)
+            raise
+        try:
+            with self._directory_fd(cwd) as cwd_fd:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-c",
+                    _BOOTSTRAP,
+                    str(self.capture_limit_bytes),
+                    request.command,
+                    cwd=f"/proc/self/fd/{cwd_fd}",
+                    pass_fds=(cwd_fd,),
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=True,
+                )
+        except BaseException:
+            os.close(stdout)
+            os.close(stderr)
+            raise
         job = _Job(process, stdout, stderr)
         self.jobs.append(job)
         return job
@@ -108,9 +118,8 @@ class ContainerShell:
         await self._stop(job)
 
     def _receipt(self, job: _Job, background: bool) -> ShellExecution:
-        with job.stdout.open("rb") as out, job.stderr.open("rb") as err:
-            stdout = out.read(self.capture_limit_bytes)
-            stderr = err.read(self.capture_limit_bytes)
+        stdout = os.pread(job.stdout, self.capture_limit_bytes, 0)
+        stderr = os.pread(job.stderr, self.capture_limit_bytes, 0)
         limited = max(len(stdout), len(stderr)) >= self.capture_limit_bytes
         status = ShellStatus.TIMEOUT if job.timed_out else ShellStatus.EXITED
         return ShellExecution(
@@ -121,8 +130,6 @@ class ContainerShell:
             background_pid=job.process.pid if background else None,
             error="Raw capture limit reached" if limited else None,
             capture_complete=not (background or limited),
-            stdout_file=str(job.stdout),
-            stderr_file=str(job.stderr),
         )
 
     async def execute(self, request: ShellRequest, timeout_ms: int) -> ShellExecution:
@@ -140,7 +147,11 @@ class ContainerShell:
             await self._stop(job)
             job.deadline.cancel()
             await asyncio.gather(job.deadline, return_exceptions=True)
-            return self._receipt(job, background=False)
+            receipt = self._receipt(job, background=False)
+            os.close(job.stdout)
+            os.close(job.stderr)
+            self.jobs.remove(job)
+            return receipt
         except BaseException:
             # A cancelled spawn can still create a process: settle it before cleanup.
             await asyncio.gather(spawn, return_exceptions=True)
@@ -151,8 +162,14 @@ class ContainerShell:
         if not self.closed:
             self.closed = True
             os.close(self.work_fd)
-        for job in self.jobs:
-            if job.deadline is not None:
-                job.deadline.cancel()
-                await asyncio.gather(job.deadline, return_exceptions=True)
-            await self._stop(job)
+        jobs, self.jobs = self.jobs, []
+        try:
+            for job in jobs:
+                if job.deadline is not None:
+                    job.deadline.cancel()
+                    await asyncio.gather(job.deadline, return_exceptions=True)
+                await self._stop(job)
+        finally:
+            for job in jobs:
+                os.close(job.stdout)
+                os.close(job.stderr)

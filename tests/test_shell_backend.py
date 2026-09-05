@@ -28,6 +28,7 @@ def test_real_output_directory_and_exit(tmp_path: Path) -> None:
 
     async def run() -> None:
         backend = ContainerShell(tmp_path)
+        descriptors = set(os.listdir("/proc/self/fd"))
         result = await backend.execute(
             ShellRequest(
                 command="pwd; printf raw; printf err >&2; exit 3",
@@ -39,6 +40,7 @@ def test_real_output_directory_and_exit(tmp_path: Path) -> None:
         assert result.stderr == "err"
         assert result.exit_code == 3
         assert result.capture_complete
+        assert set(os.listdir("/proc/self/fd")) == descriptors
         await backend.close()
         await backend.close()
 
@@ -112,6 +114,7 @@ def test_output_limit_is_explicit(tmp_path: Path) -> None:
 @container_only
 def test_cancel_reaps_group(tmp_path: Path) -> None:
     async def run() -> None:
+        descriptors = set(os.listdir("/proc/self/fd"))
         backend = ContainerShell(tmp_path)
         task = asyncio.create_task(
             backend.execute(
@@ -129,5 +132,25 @@ def test_cancel_reaps_group(tmp_path: Path) -> None:
         pid = int((tmp_path / "pid").read_text())
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
+        assert set(os.listdir("/proc/self/fd")) == descriptors
+
+    asyncio.run(run())
+
+
+@container_only
+def test_capture_is_transient_and_close_releases_it(tmp_path: Path) -> None:
+    async def run() -> None:
+        descriptors = set(os.listdir("/proc/self/fd"))
+        files = set(Path("/tmp").glob("syndicate-shell-*"))
+        backend = ContainerShell(tmp_path)
+        result = await backend.execute(
+            ShellRequest(command="printf transient; sleep 20", is_background=True), 1000
+        )
+        assert result.stdout_file is None
+        assert result.stderr_file is None
+        assert set(Path("/tmp").glob("syndicate-shell-*")) == files
+        await backend.close()
+        await backend.close()
+        assert set(os.listdir("/proc/self/fd")) == descriptors
 
     asyncio.run(run())
