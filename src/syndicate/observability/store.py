@@ -25,6 +25,11 @@ class LocalTraceStore:
             (self._trace_dir(trace_id) / f"{span_id}.json").read_bytes()
         )
 
+    def read_manifest(self, trace_id: UUID) -> TraceManifest:
+        return TraceManifest.model_validate_json(
+            (self._trace_dir(trace_id) / "manifest.json").read_bytes()
+        )
+
     def seal(
         self, trace_id: UUID, expected_span_ids: tuple[UUID, ...]
     ) -> TraceManifest:
