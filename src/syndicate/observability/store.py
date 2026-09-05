@@ -41,6 +41,7 @@ class LocalTraceStore:
         self, trace_id: UUID, expected_span_ids: tuple[UUID, ...]
     ) -> TraceManifest:
         trace = self._trace_dir(trace_id)
+        trace.mkdir(parents=True, exist_ok=True)
         spans = tuple(
             self.read(trace_id, span_id)
             for span_id in expected_span_ids

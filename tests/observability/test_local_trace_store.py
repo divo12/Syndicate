@@ -57,3 +57,15 @@ def test_seal_is_immutable_and_reports_missing_spans(tmp_path: Path) -> None:
         store.read_manifest(original.trace_id)
     with pytest.raises(ValueError, match="sealed"):
         store.record(original.model_copy(update={"span_id": missing}))
+
+
+def test_empty_trace_seals_an_explicit_all_missing_manifest(tmp_path: Path) -> None:
+    store = LocalTraceStore(tmp_path)
+    trace_id = UUID("44444444-4444-4444-4444-444444444444")
+    missing = UUID("55555555-5555-5555-5555-555555555555")
+
+    manifest = store.seal(trace_id, (missing,))
+
+    assert not manifest.complete
+    assert manifest.missing_span_ids == (missing,)
+    assert store.read_manifest(trace_id) == manifest
