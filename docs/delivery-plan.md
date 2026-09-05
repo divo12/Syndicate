@@ -37,7 +37,8 @@ Dependencies below are semantic dependencies. `R(task)` is that task's four-revi
 | M2 T1 Evidence access | S2 / P13 | Run-aligned state/audit/verifier evidence interface | P12 | 250–400 |
 | M2 T2 Task judges | S1 / P14 | Typed JudgeSpec and task-driven generation/validation | G(M1) | 250–400 |
 | M2 T2 Task judges | S2a / P15a | Typed report, recovery and citation validation; [PR #13](https://github.com/divo12/Syndicate/pull/13) | P14, P13 evidence, verified P10 | 355 |
-| M2 T2 Task judges | S2b / P15b | NexAU execution and semantic/known-outcome admission; [PR #16](https://github.com/divo12/Syndicate/pull/16) (execution boundary implemented; integration pending) | P15a, R(M2T1), verified P10, worker9 runtime | <500 |
+| M2 T2 Task judges | S2b / P15b | Dispatch/failure boundary, controller anchors and enforced read ledger; [PR #16](https://github.com/divo12/Syndicate/pull/16) | P15a, P13 evidence, verified P10 | 366 |
+| M2 T2 Task judges | S2c / P15c | Concrete NexAU binding and semantic/known-outcome admission; actual runtime behavior tests required | P15b, R(M2T1), verified P10, worker9 runtime and shared SDK parent PR14 | <500 |
 | M2 T3 Collection | S1 / P16 | Complete task-report barrier, missing-report status and overview index | R(M2T2) | 250–400 |
 | M3 T1 Candidate workspace | S1 / P17 | Immutable incumbent snapshot and isolated allowlisted candidate edits | G(M2) | 300–450 |
 | M3 T1 Candidate workspace | S2 / P18 | Diff/protected-path validation and sealed candidate hash | P17 | 250–400 |
@@ -98,10 +99,12 @@ flowchart TD
   P13 --> P15a["P15a Report validation: PR13"]
   P14 --> P15a
   P10 --> P15a
-  P15a --> P15b["P15b NexAU execution and admission: PR16"]
-  P09 --> P15b
+  P15a --> P15b["P15b Dispatch and failure boundary: PR16"]
   P13 --> P15b
-  P15b --> R15["Complete-task four-pass review"]
+  P15b --> P15c["P15c Concrete NexAU binding and admission"]
+  P09 --> P15c
+  P10 --> P15c
+  P15c --> R15["Complete-task four-pass review"]
   R15 --> P16["P16 Collection"]
   P16 --> G2["Gate M2"]
   G2 --> P17["P17 Isolated workspace"]
@@ -132,9 +135,9 @@ Intermediate review nodes are omitted from the large DAG for readability; the ca
 
 P14 [PR #9](https://github.com/divo12/Syndicate/pull/9) provides schema/public-provenance validation and pinned specifications. Historical head `a7cdf16` is superseded by `37d70a5`; this is separate from P15 integration and does not establish semantic judge validity.
 
-P15a [PR #13](https://github.com/divo12/Syndicate/pull/13) provides typed reports and authorized citation validation through worker7. P15b [PR #16](https://github.com/divo12/Syndicate/pull/16) has the single-attempt boundary, unchanged controller verifier/usage references and ID/offset read ledger. Concrete NexAU execution reuses worker9's runtime; worker7 owns evidence resolution, and worker11 owns verified remote readback. Do not duplicate those implementations.
+P15a [PR #13](https://github.com/divo12/Syndicate/pull/13) provides typed reports and authorized citation validation through worker7. P15b [PR #16](https://github.com/divo12/Syndicate/pull/16) has the single-attempt boundary, unchanged controller verifier/usage references and ID/offset read ledger. The ledger enforces which spans were fully read through worker7, retaining IDs/offsets only; it is not a second query layer. P15c concrete NexAU execution reuses worker9's runtime; worker7 owns evidence resolution, and worker11 owns verified remote readback. Do not duplicate those implementations.
 
-Both P15 slices depend on P13 trusted verifier evidence, verified P10 Neatlogs readback and the worker9 runtime. Neatlogs is the only durable trajectory source; missing/incomplete remote evidence blocks judging, with no local storage or fallback. Passing synthetic tests (including the historical 118-test run) is preparation evidence, not live acceptance. Semantic/known-outcome admission remains pending real integration. After both slices are integrated, review the complete M2 T2 stack in the four ordered passes before the M2 live gate.
+The integrated P15 task depends on P13 trusted verifier evidence, verified P10 Neatlogs readback and the worker9 runtime. Neatlogs is the only durable trajectory source; missing/incomplete remote evidence blocks judging, with no local storage or fallback. Passing synthetic tests (including the historical 118-test run) is preparation evidence, not live acceptance. Semantic/known-outcome admission remains pending real integration. P15c acceptance requires actual runtime behavior tests, not pure stubs. After all three slices are integrated, review the complete M2 T2 stack in the four ordered passes before the M2 live gate.
 
 ## Git stack and review mechanics
 
