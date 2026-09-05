@@ -8,7 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "harbor==0.22.0",
-    "neatlogs>=1.4.21",
+    "neatlogs==1.4.21",
     "nexau @ git+https://github.com/nex-agi/NexAU.git@35ee1861546db3cb280a6e17e38a74060d7c96c3",
     "pydantic==2.11.7",
 ]
