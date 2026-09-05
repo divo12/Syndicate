@@ -1,9 +1,12 @@
 """Citation contracts: remote Neatlogs IDs are not controller run UUIDs."""
 
+from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from syndicate.observability.neatlogs_capture import RunLink
 
 
 class EvidenceModel(BaseModel):
@@ -24,3 +27,22 @@ class RecordCitation(EvidenceModel):
 
 
 Citation = Annotated[SpanCitation | RecordCitation, Field(discriminator="kind")]
+
+
+class EvidenceStatus(StrEnum):
+    RESOLVED = "resolved"
+    MISSING = "missing"
+    INCOMPLETE = "incomplete"
+    MISALIGNED = "misaligned"
+    FORBIDDEN = "forbidden"
+
+
+class EvidenceGrant(EvidenceModel):
+    link: RunLink
+    trace_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    semantic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class CitationValidation(EvidenceModel):
+    status: EvidenceStatus
+    complete: bool
