@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from .models import TraceManifest, TraceSpan
+from .models import TraceLink, TraceManifest, TraceSpan
 
 
 class LocalTraceStore:
@@ -21,9 +21,12 @@ class LocalTraceStore:
             file.write(span.model_dump_json())
 
     def read(self, trace_id: UUID, span_id: UUID) -> TraceSpan:
-        return TraceSpan.model_validate_json(
+        span = TraceSpan.model_validate_json(
             (self._trace_dir(trace_id) / f"{span_id}.json").read_bytes()
         )
+        if span.trace_id != trace_id or span.span_id != span_id:
+            raise ValueError("Stored span does not match requested IDs")
+        return span
 
     def read_manifest(self, trace_id: UUID) -> TraceManifest:
         manifest = TraceManifest.model_validate_json(
@@ -38,7 +41,7 @@ class LocalTraceStore:
         return manifest
 
     def seal(
-        self, trace_id: UUID, expected_span_ids: tuple[UUID, ...]
+        self, trace_id: UUID, expected_span_ids: tuple[UUID, ...], link: TraceLink
     ) -> TraceManifest:
         trace = self._trace_dir(trace_id)
         trace.mkdir(parents=True, exist_ok=True)
@@ -59,6 +62,7 @@ class LocalTraceStore:
         )
         manifest = TraceManifest(
             trace_id=trace_id,
+            link=link,
             span_ids=tuple(span.span_id for span in spans),
             content_hash=self._content_hash(spans),
             complete=not reasons,

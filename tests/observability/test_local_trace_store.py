@@ -10,6 +10,7 @@ from syndicate.observability.models import (
     CaptureText,
     SpanKind,
     SpanStatus,
+    TraceLink,
     TraceManifest,
     TraceSpan,
 )
@@ -35,6 +36,14 @@ def span() -> TraceSpan:
     )
 
 
+def link() -> TraceLink:
+    return TraceLink(
+        operation_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        attempt_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        run_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+    )
+
+
 def test_store_preserves_raw_and_exact_model_visible_capture(tmp_path: Path) -> None:
     store = LocalTraceStore(tmp_path)
     original = span()
@@ -50,7 +59,7 @@ def test_seal_is_immutable_and_reports_missing_spans(tmp_path: Path) -> None:
     store.record(original)
     missing = UUID("33333333-3333-3333-3333-333333333333")
 
-    manifest = store.seal(original.trace_id, (original.span_id, missing))
+    manifest = store.seal(original.trace_id, (original.span_id, missing), link())
 
     assert not manifest.complete
     assert manifest.missing_span_ids == (missing,)
@@ -58,9 +67,9 @@ def test_seal_is_immutable_and_reports_missing_spans(tmp_path: Path) -> None:
     assert store.read_manifest(original.trace_id) == manifest
     span_path = tmp_path / str(original.trace_id) / f"{original.span_id}.json"
     span_path.write_text(
-        original.model_copy(update={"response": original.request}).model_dump_json()
+        original.model_copy(update={"span_id": missing}).model_dump_json()
     )
-    with pytest.raises(ValueError, match="content hash"):
+    with pytest.raises(ValueError, match="requested IDs"):
         store.read_manifest(original.trace_id)
     with pytest.raises(ValueError, match="sealed"):
         store.record(original.model_copy(update={"span_id": missing}))
@@ -71,7 +80,7 @@ def test_empty_trace_seals_an_explicit_all_missing_manifest(tmp_path: Path) -> N
     trace_id = UUID("44444444-4444-4444-4444-444444444444")
     missing = UUID("55555555-5555-5555-5555-555555555555")
 
-    manifest = store.seal(trace_id, (missing,))
+    manifest = store.seal(trace_id, (missing,), link())
 
     assert not manifest.complete
     assert manifest.missing_span_ids == (missing,)
@@ -80,7 +89,7 @@ def test_empty_trace_seals_an_explicit_all_missing_manifest(tmp_path: Path) -> N
 
 def test_manifest_rejects_a_naive_sealed_timestamp(tmp_path: Path) -> None:
     manifest = LocalTraceStore(tmp_path).seal(
-        UUID("66666666-6666-6666-6666-666666666666"), ()
+        UUID("66666666-6666-6666-6666-666666666666"), (), link()
     )
 
     with pytest.raises(ValidationError):
