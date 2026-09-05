@@ -141,3 +141,61 @@ def test_later_full_read_completes_earlier_partial_read_without_payload_cache() 
             )
         )
     assert session.examined == (CITE,)
+
+
+@pytest.mark.parametrize("usage_ref", ["", " \t"])
+def test_blank_usage_reference_prevents_dispatch(usage_ref: str) -> None:
+    spec = JudgeRegistry().generate(request(), generator(draft()))
+
+    def forbidden() -> JudgeAttempt:
+        raise AssertionError("Usage reference must be validated before dispatch")
+
+    with pytest.raises(ValueError, match="Usage"):
+        execute_judge(
+            spec, VerifierReader(Remote(), (GRANT,)), (ANCHOR,), usage_ref, forbidden
+        )
+
+
+def test_wrong_task_grant_never_dispatches() -> None:
+    from syndicate.evidence_contracts import EvidenceGrant
+    from syndicate.observability.neatlogs_capture import RunLink
+
+    spec = JudgeRegistry().generate(request(), generator(draft()))
+    wrong = EvidenceGrant(
+        link=RunLink(
+            operation_id=GRANT.link.operation_id,
+            attempt_id=GRANT.link.attempt_id,
+            run_id=RUN,
+            task_id="task-b-1",
+        ),
+        trace_ref=GRANT.trace_ref,
+        semantic_digest=GRANT.semantic_digest,
+    )
+
+    def forbidden() -> JudgeAttempt:
+        raise AssertionError("Wrong task must prevent model dispatch")
+
+    result = execute_judge(
+        spec, VerifierReader(Remote(), (wrong,)), (ANCHOR,), "usage:reserved", forbidden
+    )
+    assert result.status is ReportStatus.INCOMPLETE
+
+
+def test_skipping_a_span_page_does_not_count_as_examined() -> None:
+    from syndicate.evidence_contracts import SpanQuery
+    from syndicate.judging import JudgeEvidence
+
+    session = JudgeEvidence(EvidenceReader(Remote(), (GRANT,)))
+    for offset in (0, 10):
+        session.read_span_context(
+            SpanQuery(
+                run_id=RUN,
+                trace_ref=CITE.trace_ref,
+                span_ref=CITE.span_ref,
+                before=0,
+                after=0,
+                max_chars=5,
+                offset=offset,
+            )
+        )
+    assert session.examined == ()

@@ -205,6 +205,8 @@ def execute_judge(
     reserves usage before calling. P13 owns record kind/provenance validation.
     No retry or agent loop is implemented here; invoke belongs to NexAU.
     """
+    if not usage_ref.strip():
+        raise ValueError("Usage reservation reference is required before dispatch")
     run_ids = tuple(sorted({grant.link.run_id for grant in reader.grants}))
     incomplete = ReportDraft(
         run_ids=run_ids,
