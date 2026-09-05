@@ -12,3 +12,5 @@ dist/
 .env.*
 !.env.example
 AGENTS.md
+
+.syndicate/
