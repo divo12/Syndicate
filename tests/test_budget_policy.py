@@ -32,6 +32,14 @@ def test_policy_has_one_bounded_cap_for_every_product_role() -> None:
     assert tuple(item.role for item in budget_policy.role_budgets) == tuple(ProductRole)
 
 
+def test_policy_accepts_every_role_once_in_a_different_order() -> None:
+    role_budgets = tuple(
+        RoleBudget(role=role, cap=cap()) for role in reversed(ProductRole)
+    )
+
+    assert CampaignBudgetPolicy(role_budgets=role_budgets, campaign_cap=cap())
+
+
 @pytest.mark.parametrize("field", ["max_tokens", "max_seconds", "max_spend_microusd"])
 def test_caps_reject_missing_unbounded_or_invalid_values(field: str) -> None:
     valid = {"max_tokens": 100, "max_seconds": 60, "max_spend_microusd": 1_000}

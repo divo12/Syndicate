@@ -51,7 +51,9 @@ class CampaignBudgetPolicy(BaseModel):
 
     @model_validator(mode="after")
     def validate_totals(self) -> Self:
-        if tuple(item.role for item in self.role_budgets) != tuple(ProductRole):
+        if len(self.role_budgets) != len(ProductRole) or {
+            item.role for item in self.role_budgets
+        } != set(ProductRole):
             raise ValueError("Role budgets must cover each product role exactly once")
         for item in self.role_budgets:
             if not item.cap.fits_within(self.campaign_cap):
