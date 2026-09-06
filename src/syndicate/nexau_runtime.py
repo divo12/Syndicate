@@ -1,10 +1,12 @@
 """Controller-side NexAU bridge; every tool runs in the supplied E2B sandbox."""
 
 import asyncio
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 
 from e2b import AsyncSandbox
+from httpx import URL
 from nexau import Agent, AgentConfig
 from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.execution.hooks import (
@@ -19,7 +21,12 @@ from pydantic import SecretStr
 
 from syndicate.baseline import prepare_baseline
 from syndicate.observability.tracing import neatlogs
-from syndicate.runtime_contracts import RuntimeRequest, installed_runtime
+from syndicate.runtime_contracts import (
+    RoleDispatchReceipt,
+    RoleDispatchRequest,
+    RuntimeRequest,
+    installed_runtime,
+)
 from syndicate.shell import ShellBinding, ShellRequest
 from syndicate.shell_backend import E2BShell
 
@@ -42,6 +49,69 @@ class _Completion(Middleware):
 class _ToolReply:
     content: str
     returnDisplay: str
+
+
+async def dispatch_role(
+    request: RoleDispatchRequest, tools: tuple[Tool, ...], client: OpenAI
+) -> RoleDispatchReceipt:
+    """Run one bounded role using an admitted provider and caller-owned tools."""
+    if client.max_retries != request.max_retries:
+        raise ValueError("Role dispatch requires an OpenAI client with zero retries")
+    approved = URL(request.model.endpoint)
+    approved = approved.copy_with(path=approved.path.removesuffix("/") + "/")
+    if client.base_url != approved:
+        raise ValueError("Role dispatch client endpoint differs from approved model")
+    completion = _Completion()
+    configured_tools = [copy(tool) for tool in tools]
+    for tool in configured_tools:
+        tool.disable_parallel = True
+    agent = Agent(
+        config=AgentConfig(
+            name=request.role.value,
+            system_prompt=request.prompt,
+            system_prompt_type="string",
+            max_iterations=request.max_iterations,
+            max_context_tokens=request.max_context_tokens,
+            # NexAU uses range(retry_attempts): one total provider attempt.
+            retry_attempts=1,
+            tools=configured_tools,
+            middlewares=[completion],
+            llm_config=LLMConfig(
+                model=request.model.deployment,
+                base_url=request.model.endpoint,
+                api_key=client.api_key,
+                api_type="openai_responses",
+                max_tokens=request.max_output_tokens,
+                stream=False,
+                timeout=request.budget.max_seconds,
+                max_retries=0,
+            ),
+        )
+    )
+    try:
+        with neatlogs.trace(f"dispatch-{request.role.value}", kind="WORKFLOW") as span:
+            span.set_attribute("input.value", request.prompt)
+            client = neatlogs.wrap(client)
+            async with asyncio.timeout(request.budget.max_seconds):
+                result = await agent.run_async(
+                    message=request.prompt,
+                    custom_llm_client_provider=lambda _: client,
+                )
+            if completion.reason not in (
+                AgentStopReason.SUCCESS,
+                AgentStopReason.NO_MORE_TOOL_CALLS,
+            ):
+                raise RuntimeStopped(completion.reason)
+            if not isinstance(result, str):
+                raise TypeError("Unexpected NexAU response shape")
+            span.set_attribute("output.value", result)
+            return RoleDispatchReceipt(
+                final_text=result,
+                usage_ref=request.usage_ref,
+                stop_reason=completion.reason,
+            )
+    finally:
+        agent.sync_cleanup()
 
 
 async def run_on_controller(
