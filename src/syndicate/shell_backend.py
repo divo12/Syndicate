@@ -58,7 +58,7 @@ class E2BShell:
     def _command(self, request: ShellRequest, timeout_ms: int) -> str:
         # The supervisor survives child-group cleanup and retains its exit code.
         script = (
-            f'cd -P -- {shlex.quote(self.work_dir)} || exit 125; root="$PWD"; '
+            f'cd -P -- {shlex.quote(self.work_dir)} || exit 125; root="${{PWD%/}}"; '
             f"cd -P -- {shlex.quote(request.dir_path or '.')} || exit 125; "
             'case "$PWD" in "$root"|"$root"/*) ;; *) exit 125;; esac; '
             f'test "$(id -u)" = {self.uid} || exit 125; '

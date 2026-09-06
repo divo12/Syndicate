@@ -24,6 +24,11 @@ async def smoke() -> None:
         assert result.stdout == "/work/sub\nremote-ok", result
         assert result.exit_code == 0
         print("remote output and working directory: passed")
+        root_shell = E2BShell(sandbox, "/")
+        root_result = await root_shell.execute(
+            ShellRequest(command="pwd", dir_path="/work"), 10000
+        )
+        assert root_result.stdout == "/work\n"
         rejected = await shell.execute(
             ShellRequest(command="echo must-not-run", dir_path="/"), 10000
         )
