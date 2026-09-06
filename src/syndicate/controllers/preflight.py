@@ -1,16 +1,23 @@
 """Operator preflight command and internal controller request transport."""
 
+from __future__ import annotations
+
 import hashlib
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from syndicate.controllers.pure_handlers import collect, compare, select
+from syndicate.models.budget import ProductRole
 from syndicate.models.commands import (
     CollectReportsCommand,
     CommandRequest,
     CompareHarnessCommand,
+    JudgeTaskCommand,
+    ProposeHarnessCommand,
+    RunTrialCommand,
     SelectHarnessCommand,
     parse_command,
 )
@@ -23,6 +30,7 @@ from syndicate.models.envelope import (
     ErrorReason,
     PreflightCommand,
 )
+from syndicate.models.model_config import load_model_config
 from syndicate.repositories.artifact_store import ArtifactStore
 from syndicate.services.preflight import (
     AdmissionError,
@@ -32,6 +40,9 @@ from syndicate.services.preflight import (
     prepare_preflight,
 )
 from syndicate.services.schema_export import export_schemas
+
+if TYPE_CHECKING:
+    from syndicate.controllers.live_handlers import LiveHandlers
 
 
 def contained(path: Path, root: Path) -> Path:
@@ -140,20 +151,61 @@ def operator_preflight(config_file: Path, root: Path) -> tuple[CommandReceipt, i
         ), 2
 
 
-def execute_pure(command: CommandRequest, root: Path) -> CommandReceipt:
+def execute_pure(
+    command: CommandRequest, root: Path, handlers: LiveHandlers | None = None
+) -> CommandReceipt:
     controller = ControllerConfig.model_validate_json(
         (root / "controller.json").read_bytes()
     )
     if command.content_hash not in controller.approved_request_hashes:
         raise ValueError("Controller did not approve this command request")
     store = ArtifactStore(root)
+    if isinstance(command, RunTrialCommand):
+        from syndicate.controllers.live_handlers import LiveHandlers, run
+
+        _admit_budget(command, controller, ProductRole.EXECUTOR)
+        return run(
+            command,
+            store,
+            load_model_config(controller.env_file).api_key,
+            handlers or LiveHandlers(),
+        )
+    if isinstance(command, JudgeTaskCommand):
+        from syndicate.controllers.live_handlers import LiveHandlers, judge
+
+        _admit_budget(command, controller, ProductRole.TASK_JUDGE)
+        return judge(
+            command,
+            store,
+            load_model_config(controller.env_file).api_key,
+            handlers or LiveHandlers(),
+        )
+    if isinstance(command, ProposeHarnessCommand):
+        from syndicate.controllers.live_handlers import LiveHandlers, propose
+
+        _admit_budget(command, controller, ProductRole.IMPROVEMENT_AGENT)
+        return propose(
+            command,
+            store,
+            load_model_config(controller.env_file).api_key,
+            handlers or LiveHandlers(),
+        )
     if isinstance(command, CollectReportsCommand):
         return collect(command, store)
     if isinstance(command, CompareHarnessCommand):
         return compare(command, store)
     if isinstance(command, SelectHarnessCommand):
         return select(command, store)
-    raise ValueError("Command handler is not installed")
+    raise ValueError("Unknown controller command")
+
+
+def _admit_budget(
+    command: RunTrialCommand | JudgeTaskCommand | ProposeHarnessCommand,
+    controller: ControllerConfig,
+    role: ProductRole,
+) -> None:
+    if not command.budget.fits_within(controller.budget.budget_for(role)):
+        raise ValueError("Command budget exceeds approved role cap")
 
 
 def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:

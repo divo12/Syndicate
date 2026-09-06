@@ -76,6 +76,10 @@ class ArtifactKind(StrEnum):
     LINEAGE = "lineage"
     COLLECTION = "collection"
     PROMOTION = "promotion"
+    RUNTIME_REQUEST = "runtime_request"
+    JUDGE_INPUT = "judge_input"
+    PROPOSAL_INPUT = "proposal_input"
+    CANDIDATE_RECEIPT = "candidate_receipt"
 
 
 class ArtifactRef(WireModel):

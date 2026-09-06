@@ -40,7 +40,14 @@ class RunTrialCommand(Command):
     runtime_image_hash: Digest
     judge_spec_hash: Digest
     verifier_version: str = Field(min_length=1, pattern=r"\S")
+    runtime_request_ref: ArtifactRef
     budget: BudgetCap
+
+    @model_validator(mode="after")
+    def runtime_input_kind(self) -> Self:
+        if self.runtime_request_ref.kind is not ArtifactKind.RUNTIME_REQUEST:
+            raise ValueError("Run request reference has invalid artifact kind")
+        return self
 
 
 class JudgeTaskCommand(Command):
@@ -48,7 +55,16 @@ class JudgeTaskCommand(Command):
     task_id: str = Field(min_length=1, pattern=r"\S")
     judge_spec_hash: Digest
     run_refs: tuple[ArtifactRef, ...] = Field(min_length=1)
+    judge_input_ref: ArtifactRef
     budget: BudgetCap
+
+    @model_validator(mode="after")
+    def judge_input_kinds(self) -> Self:
+        if self.judge_input_ref.kind is not ArtifactKind.JUDGE_INPUT or any(
+            reference.kind is not ArtifactKind.RUN for reference in self.run_refs
+        ):
+            raise ValueError("Judge references have invalid artifact kinds")
+        return self
 
 
 class CollectReportsCommand(Command):
@@ -70,7 +86,17 @@ class ProposeHarnessCommand(Command):
     candidate_id: str = Field(min_length=1, pattern=r"\S")
     parent_harness_hash: Digest
     diagnosis_ref: ArtifactRef
+    proposal_input_ref: ArtifactRef
     budget: BudgetCap
+
+    @model_validator(mode="after")
+    def proposal_input_kinds(self) -> Self:
+        if (
+            self.diagnosis_ref.kind is not ArtifactKind.DIAGNOSIS
+            or self.proposal_input_ref.kind is not ArtifactKind.PROPOSAL_INPUT
+        ):
+            raise ValueError("Proposal references have invalid artifact kinds")
+        return self
 
 
 class CompareHarnessCommand(Command):
