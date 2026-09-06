@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   type CommandReceipt,
   type PythonInvocation,
@@ -14,6 +17,15 @@ export type WorkflowRequests = Readonly<{
   select: PythonInvocation;
 }>;
 
+export type StageStatus = Readonly<{
+  stage: keyof WorkflowRequests;
+  status: TransportResult["status"] | CommandReceipt["status"];
+  summary: string;
+  next_actions: readonly string[];
+  artifacts: readonly string[];
+  receipt: CommandReceipt;
+}>;
+
 export type WorkflowReceipt = Readonly<{
   execute: CommandReceipt;
   judge: CommandReceipt;
@@ -21,12 +33,26 @@ export type WorkflowReceipt = Readonly<{
   improve: CommandReceipt;
   compare: CommandReceipt;
   select: CommandReceipt;
+  stages: readonly StageStatus[];
 }>;
 
 type Invoke = (input: PythonInvocation) => Promise<TransportResult>;
 type Stage = keyof WorkflowRequests;
 
-export class WorkflowError extends Error {}
+export class WorkflowError extends Error {
+  readonly stage: Stage;
+  readonly status: string;
+  readonly next_actions: readonly string[];
+
+  constructor(stage: Stage, status: string, next_actions: readonly string[]) {
+    super(
+      `${stage} returned ${status}; next_actions: ${next_actions.join(" | ")}`,
+    );
+    this.stage = stage;
+    this.status = status;
+    this.next_actions = next_actions;
+  }
+}
 
 async function requireControllerSchemas(requests: WorkflowRequests): Promise<void> {
   const controllerCwd = requests.execute.controllerCwd;
@@ -39,7 +65,9 @@ async function requireControllerSchemas(requests: WorkflowRequests): Promise<voi
       requests.select,
     ].some((request) => request.controllerCwd !== controllerCwd)
   ) {
-    throw new WorkflowError("Workflow requests must share a controller cwd");
+    throw new WorkflowError("execute", "blocked", [
+      "stop: workflow requests must share one controller cwd",
+    ]);
   }
   try {
     const schemas = await Promise.all(
@@ -49,20 +77,40 @@ async function requireControllerSchemas(requests: WorkflowRequests): Promise<voi
     );
     schemas.forEach((schema) => JSON.parse(schema));
   } catch {
-    throw new WorkflowError("Controller schema artifacts are unavailable");
+    throw new WorkflowError("execute", "blocked", [
+      "stop: export controller schema artifacts before dispatch",
+    ]);
   }
+}
+
+function stageActions(stage: Stage, result: TransportResult): readonly string[] {
+  if (result.next_actions.length > 0) {
+    return result.next_actions;
+  }
+  return [`inspect ${stage} receipt.status and stderr before continuing`];
 }
 
 async function runStage(
   stage: Stage,
   input: PythonInvocation,
   invoke: Invoke,
-): Promise<CommandReceipt> {
-  const receipt = (await invoke(input)).receipt;
-  if (receipt.status !== "completed") {
-    throw new WorkflowError(`${stage} returned ${receipt.status}`);
+): Promise<StageStatus> {
+  const result = await invoke(input);
+  const next_actions = stageActions(stage, result);
+  if (result.status === "error" || result.receipt === undefined) {
+    throw new WorkflowError(stage, result.status, next_actions);
   }
-  return receipt;
+  if (result.receipt.status !== "completed") {
+    throw new WorkflowError(stage, result.receipt.status, next_actions);
+  }
+  return {
+    stage,
+    status: result.receipt.status,
+    summary: result.summary,
+    next_actions,
+    artifacts: result.artifacts,
+    receipt: result.receipt,
+  };
 }
 
 export async function runWorkflow(
@@ -76,7 +124,13 @@ export async function runWorkflow(
   const improve = await runStage("improve", requests.improve, invoke);
   const compare = await runStage("compare", requests.compare, invoke);
   const select = await runStage("select", requests.select, invoke);
-  return { execute, judge, collect, improve, compare, select };
+  return {
+    execute: execute.receipt,
+    judge: judge.receipt,
+    collect: collect.receipt,
+    improve: improve.receipt,
+    compare: compare.receipt,
+    select: select.receipt,
+    stages: [execute, judge, collect, improve, compare, select],
+  };
 }
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";

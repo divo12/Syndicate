@@ -41,8 +41,18 @@ function invocation(controllerCwd: string, operationId: string): PythonInvocatio
   };
 }
 
-function receipt(input: PythonInvocation, status: CommandReceipt["status"]): TransportResult {
+function receipt(
+  input: PythonInvocation,
+  status: CommandReceipt["status"],
+): TransportResult {
   return {
+    status: status === "completed" ? "success" : "warning",
+    summary: `Python command returned ${status}`,
+    next_actions:
+      status === "completed"
+        ? ["read receipt.artifact_refs"]
+        : [`inspect ${status} receipt before retrying`],
+    artifacts: [],
     receipt: {
       schema_version: 1,
       operation_id: input.operationId,
@@ -74,6 +84,8 @@ test("composes controller-owned requests in the required order", async () => {
   });
   assert.deepEqual(calls, IDS);
   assert.equal(result.select.operation_id, IDS[5]);
+  assert.equal(result.stages.length, 6);
+  assert.equal(result.stages[5]?.status, "completed");
 });
 
 test("does not schedule subsequent stages after a failed receipt", async () => {
@@ -83,7 +95,11 @@ test("does not schedule subsequent stages after a failed receipt", async () => {
       calls.push(input.operationId);
       return receipt(input, calls.length === 2 ? "failed" : "completed");
     }),
-    WorkflowError,
+    (error: unknown) =>
+      error instanceof WorkflowError &&
+      error.stage === "judge" &&
+      error.status === "failed" &&
+      error.next_actions.some((action) => action.includes("failed")),
   );
   assert.deepEqual(calls, IDS.slice(0, 2));
 });
