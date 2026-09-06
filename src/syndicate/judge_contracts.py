@@ -114,7 +114,11 @@ class JudgeSpec(JudgeDraft):
     task_id: Text
     input_hash: Text
     model: Literal["gpt-5.4-mini"] = "gpt-5.4-mini"
-    allowed_tools: tuple[JudgeTool, ...] = tuple(JudgeTool)
+    allowed_tools: tuple[JudgeTool, ...] = (
+        JudgeTool.MANIFEST,
+        JudgeTool.SEARCH,
+        JudgeTool.SPAN,
+    )
     budget: BudgetCap
     prompt: Text
 
