@@ -14,6 +14,7 @@ from syndicate.evidence_contracts import (
     RecordCitation,
     RunEvidenceGrant,
 )
+from syndicate.harbor_agent import CleanupReceipt
 
 
 def receipt(
@@ -35,6 +36,7 @@ def receipt(
         run_id=UUID(int=3),
         task_id="task-a-1",
         cleanup_complete=cleanup_complete,
+        cleanup=CleanupReceipt(uid=10001, complete=cleanup_complete),
         outcome=outcome,
         verifier=verifier,
     )

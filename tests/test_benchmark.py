@@ -1,7 +1,11 @@
 import asyncio
+from typing import cast
 from uuid import uuid4
 
 import pytest
+from harbor.environments.base import BaseEnvironment
+from harbor.models.task.task import Task
+from harbor.models.trial.paths import TrialPaths
 from harbor.models.verifier.result import VerifierResult
 
 from syndicate.benchmark import (
@@ -11,6 +15,7 @@ from syndicate.benchmark import (
     VerifierReceipt,
     classify_verifier,
     verify,
+    verify_with_harbor,
 )
 from syndicate.harbor_agent import CleanupReceipt
 
@@ -113,3 +118,16 @@ def test_run_receipt_rejects_mismatched_cleanup_flag() -> None:
             outcome=RunOutcome.UNVERIFIED,
             verifier=verifier,
         )
+
+
+def test_incomplete_cleanup_blocks_harbor_verification() -> None:
+    receipt = asyncio.run(
+        verify_with_harbor(
+            cast(Task, None),
+            cast(TrialPaths, None),
+            cast(BaseEnvironment, None),
+            "harbor:opaque",
+            CleanupReceipt(uid=1, complete=False),
+        )
+    )
+    assert receipt.reason is VerifierReason.CLEANUP_INCOMPLETE
