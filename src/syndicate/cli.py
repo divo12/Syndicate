@@ -5,12 +5,16 @@ import sys
 from pathlib import Path
 
 from syndicate.cli_envelope import (
+    ArtifactKind,
     ArtifactRef,
+    Command,
     CommandError,
     CommandReceipt,
+    CommandRequest,
     CommandStatus,
     ErrorReason,
     PreflightCommand,
+    parse_command,
 )
 from syndicate.preflight import AdmissionError, ControllerConfig, preflight
 
@@ -23,19 +27,38 @@ def contained(path: Path, root: Path) -> Path:
     return path
 
 
-def read_request(arguments: list[str], root: Path) -> tuple[PreflightCommand, Path]:
+def read_request(arguments: list[str], root: Path) -> tuple[CommandRequest, Path]:
     if len(arguments) != 3 or arguments[:2] != ["execute", "--request"]:
         raise ValueError("Invalid invocation")
     path = contained(Path(arguments[2]), root / "runs")
-    command = PreflightCommand.model_validate_json(path.read_bytes())
+    command = parse_command(path.read_bytes())
     expected = root / "runs" / str(command.operation_id) / str(command.attempt_id)
     if path != expected / "request.json":
         raise ValueError("Request IDs do not match controller path")
     return command, expected
 
 
+def request_path(root: Path, command: Command) -> Path:
+    contained(root, root)
+    return (
+        root
+        / "runs"
+        / str(command.operation_id)
+        / str(command.attempt_id)
+        / "request.json"
+    )
+
+
+def write_request(root: Path, command: Command) -> Path:
+    path = request_path(root, command)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as request:
+        request.write(command.model_dump_json())
+    return path
+
+
 def failure(
-    status: CommandStatus, reason: ErrorReason, command: PreflightCommand | None
+    status: CommandStatus, reason: ErrorReason, command: Command | None
 ) -> CommandReceipt:
     return CommandReceipt(
         operation_id=command.operation_id if command else None,
@@ -53,6 +76,7 @@ def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     with (run / "preflight.json").open("xb") as artifact:
         artifact.write(payload)
     reference = ArtifactRef(
+        kind=ArtifactKind.PREFLIGHT,
         operation_id=command.operation_id,
         attempt_id=command.attempt_id,
         sha256=hashlib.sha256(payload).hexdigest(),
@@ -72,6 +96,8 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     except (OSError, ValueError):
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, None), 2
     try:
+        if not isinstance(command, PreflightCommand):
+            raise ValueError("Command handler is not installed")
         return execute(command, run, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2

@@ -1,11 +1,15 @@
 """Shared workflow wire types; domain results live in referenced artifacts."""
 
 import hashlib
+import json
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+
+from syndicate.budget_policy import BudgetCap
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -33,15 +37,97 @@ class Command(WireModel):
     attempt_id: UUID
     operation: Operation
 
+    @property
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()
+
 
 class PreflightCommand(Command):
     operation: Literal[Operation.PREFLIGHT] = Operation.PREFLIGHT
     manifest_hash: Digest
 
-    @property
-    def content_hash(self) -> str:
-        """Hash the canonical typed request, independent of JSON whitespace."""
-        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()
+
+class ArtifactKind(StrEnum):
+    PREFLIGHT = "preflight"
+    RUN = "run"
+    REPORT = "report"
+    DIAGNOSIS = "diagnosis"
+    SCHEDULE = "schedule"
+    COMPARISON = "comparison"
+
+
+class ArtifactRef(WireModel):
+    kind: ArtifactKind
+    operation_id: UUID
+    attempt_id: UUID
+    sha256: Digest
+
+
+class RunTrialCommand(Command):
+    operation: Literal[Operation.RUN_TRIAL] = Operation.RUN_TRIAL
+    task_id: str = Field(min_length=1, pattern=r"\S")
+    harness_hash: Digest
+    memory_hash: Digest
+    model_config_hash: Digest
+    runtime_image_hash: Digest
+    judge_spec_hash: Digest
+    verifier_version: str = Field(min_length=1, pattern=r"\S")
+    budget: BudgetCap
+
+
+class JudgeTaskCommand(Command):
+    operation: Literal[Operation.JUDGE_TASK] = Operation.JUDGE_TASK
+    task_id: str = Field(min_length=1, pattern=r"\S")
+    judge_spec_hash: Digest
+    run_refs: tuple[ArtifactRef, ...] = Field(min_length=1)
+    budget: BudgetCap
+
+
+class CollectReportsCommand(Command):
+    operation: Literal[Operation.COLLECT_REPORTS] = Operation.COLLECT_REPORTS
+    expected_task_ids: tuple[str, ...] = Field(min_length=1)
+    report_refs: tuple[ArtifactRef, ...] = Field(min_length=1)
+
+
+class ProposeHarnessCommand(Command):
+    operation: Literal[Operation.PROPOSE_HARNESS] = Operation.PROPOSE_HARNESS
+    candidate_id: str = Field(min_length=1, pattern=r"\S")
+    parent_harness_hash: Digest
+    diagnosis_ref: ArtifactRef
+    budget: BudgetCap
+
+
+class CompareHarnessCommand(Command):
+    operation: Literal[Operation.COMPARE_HARNESS] = Operation.COMPARE_HARNESS
+    parent_harness_hash: Digest
+    candidate_harness_hash: Digest
+    schedule_ref: ArtifactRef
+    budget: BudgetCap
+
+
+class SelectHarnessCommand(Command):
+    operation: Literal[Operation.SELECT_HARNESS] = Operation.SELECT_HARNESS
+    parent_harness_hash: Digest
+    candidate_harness_hash: Digest
+    comparison_ref: ArtifactRef
+
+
+type CommandRequest = Annotated[
+    PreflightCommand
+    | RunTrialCommand
+    | JudgeTaskCommand
+    | CollectReportsCommand
+    | ProposeHarnessCommand
+    | CompareHarnessCommand
+    | SelectHarnessCommand,
+    Field(discriminator="operation"),
+]
+_COMMAND_ADAPTER: TypeAdapter[CommandRequest] = TypeAdapter(CommandRequest)
+
+
+def parse_command(payload: str | bytes) -> CommandRequest:
+    """External JSON boundary; internal code receives a discriminated model."""
+    return _COMMAND_ADAPTER.validate_json(payload)
 
 
 class CommandStatus(StrEnum):
@@ -62,13 +148,6 @@ class CommandError(WireModel):
     message: str
 
 
-class ArtifactRef(WireModel):
-    kind: Literal["preflight"] = "preflight"
-    operation_id: UUID
-    attempt_id: UUID
-    sha256: Digest
-
-
 class CommandReceipt(WireModel):
     schema_version: Literal[1] = 1
     operation_id: UUID | None
@@ -76,3 +155,38 @@ class CommandReceipt(WireModel):
     status: CommandStatus
     artifact_refs: tuple[ArtifactRef, ...] = ()
     error: CommandError | None = None
+
+
+def command_schema_json() -> str:
+    return json.dumps(
+        _COMMAND_ADAPTER.json_schema(), sort_keys=True, separators=(",", ":")
+    )
+
+
+def receipt_schema_json() -> str:
+    return json.dumps(
+        CommandReceipt.model_json_schema(), sort_keys=True, separators=(",", ":")
+    )
+
+
+def schema_artifact_paths(root: Path) -> tuple[Path, Path]:
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("Schema root must be an absolute nonsymlink path")
+    schema_root = root / "schemas"
+    return (
+        schema_root / "command-request-v1.json",
+        schema_root / "command-receipt-v1.json",
+    )
+
+
+def write_schemas(root: Path) -> tuple[Path, Path]:
+    paths = schema_artifact_paths(root)
+    paths[0].parent.mkdir(parents=True, exist_ok=True)
+    for path, payload in zip(
+        paths, (command_schema_json(), receipt_schema_json()), strict=True
+    ):
+        if path.exists() and path.read_text(encoding="utf-8") != payload:
+            raise ValueError("Versioned schema artifact differs from this controller")
+        if not path.exists():
+            path.write_text(payload, encoding="utf-8")
+    return paths
