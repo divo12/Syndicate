@@ -3,7 +3,10 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from syndicate.models.comparison import PairSchedule
+from syndicate.models.envelope import ArtifactKind, ArtifactRef
 from syndicate.models.evidence import RecordCitation, SpanCitation
 from syndicate.models.improvement import (
     CandidateCheck,
@@ -280,3 +283,60 @@ def test_report_serializes_limits_without_claiming_held_out_results() -> None:
     assert "not_run" in report_view.to_json()
     assert "Held-out evaluation has not run." in report_view.to_markdown()
     assert "Synthetic preparation data" in report_view.to_markdown()
+
+
+def test_complete_held_out_evaluation_requires_recorded_assessment_ref() -> None:
+    with pytest.raises(ValueError, match="assessment"):
+        HeldOutEvaluation(
+            status=HeldOutStatus.COMPLETE,
+            task_ids=("task-held-out-1",),
+            limitation="Recorded held-out evaluation.",
+        )
+
+    reference = ArtifactRef(
+        kind=ArtifactKind.ASSESSMENT,
+        operation_id=UUID(int=2),
+        attempt_id=UUID(int=3),
+        sha256="a" * 64,
+    )
+    complete = HeldOutEvaluation(
+        status=HeldOutStatus.COMPLETE,
+        task_ids=("task-held-out-1",),
+        limitation="Recorded held-out evaluation.",
+        assessment_ref=reference,
+    )
+    with pytest.raises(ValueError, match="Incomplete"):
+        HeldOutEvaluation(
+            status=HeldOutStatus.NOT_RUN,
+            task_ids=("task-held-out-1",),
+            limitation="Held-out evaluation has not run.",
+            assessment_ref=reference,
+        )
+
+    comparison = ComparisonAssessment(
+        decision=ComparisonDecision.INCONCLUSIVE,
+        incumbent=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        candidate=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        reason_codes=(ReasonCode.EVIDENCE_INCOMPLETE,),
+    )
+    with pytest.raises(ValueError, match="recorded"):
+        ReviewReport(
+            campaign=ReviewCampaign(
+                campaign_id="campaign-1",
+                source=ReceiptSource.SYNTHETIC,
+                reports=(report(),),
+            ),
+            assessment=comparison,
+            held_out=complete,
+            limitations=("Synthetic preparation data is not campaign evidence.",),
+        )
