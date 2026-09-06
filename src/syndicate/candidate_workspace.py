@@ -29,6 +29,8 @@ def create_candidate_workspace(
     temporary_parent: Path,
 ) -> CandidateWorkspace:
     """Copy an incumbent once, then expose only declared candidate files."""
+    if incumbent_root.is_symlink():
+        raise ValueError("incumbent must not be a symlink")
     source = incumbent_root.resolve(strict=True)
     if not source.is_dir():
         raise ValueError("incumbent root must be a directory")

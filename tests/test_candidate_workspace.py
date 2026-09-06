@@ -39,3 +39,12 @@ def test_snapshot_rejects_symlinked_incumbent_content(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="symlink"):
         create_candidate_workspace(incumbent, ("prompt.md",), tmp_path / "workspaces")
+
+
+def test_snapshot_rejects_a_symlinked_incumbent_root(tmp_path: Path) -> None:
+    incumbent = _incumbent(tmp_path)
+    linked_root = tmp_path / "linked-harness"
+    linked_root.symlink_to(incumbent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        create_candidate_workspace(linked_root, ("prompt.md",), tmp_path / "workspaces")
