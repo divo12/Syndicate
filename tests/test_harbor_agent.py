@@ -1,47 +1,85 @@
+"""Lifecycle proof follows successful controller execution, never failed probes."""
+
 import asyncio
-import inspect
-from unittest.mock import AsyncMock, call, create_autospec
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from harbor.environments.base import BaseEnvironment, ExecResult
+from e2b import AsyncSandbox
+from e2b.sandbox.commands.command_handle import CommandExitException, CommandResult
+from pydantic import SecretStr, ValidationError
+from test_runtime_request import request
 
-from syndicate.harbor_agent import HarborAgent, runtime_command
-
-
-def test_runtime_command_has_no_dead_path_argument() -> None:
-    assert runtime_command() == "python -I -m syndicate.nexau_runtime"
-    assert not inspect.signature(runtime_command).parameters
+from syndicate.harbor_agent import CleanupReceipt, HarborAgent
 
 
-def test_lifecycle_hides_verifier_paths_and_settles_uid_before_returning() -> None:
-    environment = create_autospec(BaseEnvironment, instance=True)
-    environment.exec = AsyncMock(
-        side_effect=(
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=1),
-            ExecResult(return_code=1),
+def agent() -> HarborAgent:
+    sandbox = Mock(spec=AsyncSandbox)
+    sandbox.commands.run = AsyncMock(
+        return_value=CommandResult(
+            stdout="",
+            stderr="",
+            exit_code=0,
+            error=None,
         )
     )
-    receipt = asyncio.run(HarborAgent(environment, cleanup_timeout_ms=100).run("true"))
-    assert receipt.complete
-    assert environment.exec.await_args_list == [
-        call(command="test ! -e /tests && test ! -e /solution", user="10001"),
-        call(command="true", user="10001"),
-        call(command="pkill -KILL -u 10001 || true", user="root"),
-        call(command="pgrep -u 10001", user="root"),
-        call(command="pgrep -u 10001", user="root"),
-    ]
+    return HarborAgent(sandbox, harness_dir=Path("seed"), framework_lock=Path("lock"))
 
 
-def test_failed_hidden_path_probe_blocks_agent_execution() -> None:
-    environment = create_autospec(BaseEnvironment, instance=True)
-    environment.exec = AsyncMock(return_value=ExecResult(return_code=1))
+def test_success_proof_uses_existing_controller_runner() -> None:
+    runner = agent()
+    value, key = request(), SecretStr("fixture")
+    with patch(
+        "syndicate.harbor_agent.run_on_controller", new_callable=AsyncMock
+    ) as run:
+        receipt = asyncio.run(runner.run(value, key))
+    assert receipt == CleanupReceipt(complete=True)
+    run.assert_awaited_once_with(
+        value,
+        key,
+        runner.sandbox,
+        harness_dir=Path("seed"),
+        framework_lock=Path("lock"),
+    )
 
-    with pytest.raises(PermissionError, match="Hidden"):
-        asyncio.run(HarborAgent(environment).run("true"))
 
-    assert environment.exec.await_args_list == [
-        call(command="test ! -e /tests && test ! -e /solution", user="10001")
-    ]
+@pytest.mark.parametrize("exit_code", [1, 2, 127])
+def test_probe_failure_never_runs_agent(exit_code: int) -> None:
+    runner = agent()
+    with (
+        patch.object(
+            runner.sandbox.commands,
+            "run",
+            new_callable=AsyncMock,
+            side_effect=CommandExitException(
+                stdout="", stderr="", exit_code=exit_code, error=None
+            ),
+        ),
+        patch(
+            "syndicate.harbor_agent.run_on_controller", new_callable=AsyncMock
+        ) as run,
+    ):
+        with pytest.raises(PermissionError):
+            asyncio.run(runner.run(request(), SecretStr("fixture")))
+    run.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("runtime failed"), RuntimeError("cleanup failed")]
+)
+def test_failed_execution_or_cleanup_has_no_success_receipt(
+    failure: RuntimeError,
+) -> None:
+    runner = agent()
+    with patch(
+        "syndicate.harbor_agent.run_on_controller",
+        new_callable=AsyncMock,
+        side_effect=failure,
+    ):
+        with pytest.raises(RuntimeError, match=str(failure)):
+            asyncio.run(runner.run(request(), SecretStr("fixture")))
+
+
+def test_wrong_cleanup_uid_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        CleanupReceipt(uid=10002, complete=True)  # type: ignore[arg-type]

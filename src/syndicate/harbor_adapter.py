@@ -1,25 +1,34 @@
-"""Native Harbor agent that launches the approved NexAU runtime in a task world."""
+"""Run NexAU on the controller against Harbor's existing E2B task sandbox."""
 
-import tempfile
+import shlex
 from datetime import UTC, datetime
 from logging import Logger
 from pathlib import Path, PurePosixPath
 from typing import override
 
+from e2b import AsyncSandbox
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
+from harbor.environments.e2b import E2BEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import MCPServerConfig
 from pydantic import SecretStr
 
-from syndicate.harbor_agent import CleanupReceipt, HarborAgent, runtime_command
+from syndicate.harbor_agent import CleanupReceipt, HarborAgent
 from syndicate.runtime_contracts import RuntimeRequest
 from syndicate.stock_receipt import ControllerTrialBinding, emit_cleanup_receipt
 
-REQUEST_PATH = "/run/syndicate/request.json"
-KEY_PATH = "/run/syndicate/api-key"
-HARNESS_PATH = "/run/syndicate/harness"
 HARNESS_SOURCE = Path(__file__).parents[2] / "harnesses/seed"
+FRAMEWORK_LOCK = Path(__file__).parents[2] / "requirements.lock"
+
+
+def _sandbox(environment: BaseEnvironment) -> AsyncSandbox:
+    if not isinstance(environment, E2BEnvironment):
+        raise ValueError("Syndicate requires Harbor's E2B environment")
+    # Harbor 0.22.0 exposes no public accessor for its owned sandbox.
+    if environment._sandbox is None:
+        raise RuntimeError("Harbor E2B environment must be started")
+    return environment._sandbox
 
 
 class SyndicateNexAUAgent(BaseAgent):
@@ -30,6 +39,8 @@ class SyndicateNexAUAgent(BaseAgent):
         logs_dir: Path,
         request: RuntimeRequest,
         api_key: SecretStr,
+        harness_dir: Path = HARNESS_SOURCE,
+        framework_lock: Path = FRAMEWORK_LOCK,
         model_name: str | None = None,
         logger: Logger | None = None,
         mcp_servers: list[MCPServerConfig] | None = None,
@@ -50,6 +61,8 @@ class SyndicateNexAUAgent(BaseAgent):
         )
         self.request = request
         self.api_key = api_key
+        self.harness_dir = harness_dir
+        self.framework_lock = framework_lock
         self.cleanup_receipt: CleanupReceipt | None = None
         self._controller_binding: ControllerTrialBinding | None = None
         self._controller_root: Path | None = None
@@ -64,27 +77,24 @@ class SyndicateNexAUAgent(BaseAgent):
         return "0.1.0"
 
     async def setup(self, environment: BaseEnvironment) -> None:
-        await environment.exec(command="mkdir -p /run/syndicate", user="root")
-        await environment.upload_dir(HARNESS_SOURCE, HARNESS_PATH)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            request_path = root / "request.json"
-            key_path = root / "api-key"
-            request_path.write_text(self.request.model_dump_json())
-            key_path.write_text(self.api_key.get_secret_value())
-            await environment.upload_file(request_path, REQUEST_PATH)
-            await environment.upload_file(key_path, KEY_PATH)
-        await environment.exec(
-            command=(f"chown -R 10001:10001 /run/syndicate && chmod 600 {KEY_PATH}"),
-            user="root",
+        workspace = shlex.quote(
+            self.request.baseline.prompt_variables.working_directory
         )
-
-    def bind_controller_receipt(
-        self, binding: ControllerTrialBinding, controller_root: Path
-    ) -> None:
-        """Bind controller IDs before stock Harbor invokes this agent."""
-        self._controller_binding = binding
-        self._controller_root = controller_root
+        probe = (
+            f"test -d {workspace} && test -r {workspace} && "
+            f"test -w {workspace} && test -x {workspace}"
+        )
+        result = await _sandbox(environment).commands.run(
+            'test "$(id -u 10001)" = 10001 && '
+            'test "$(id -g 10001)" = 10001 && '
+            "command -v bash setpriv setsid timeout pkill pgrep >/dev/null && "
+            "setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs "
+            f"/bin/bash --noprofile --norc -c {shlex.quote(probe)}",
+            user="root",
+            timeout=5,
+        )
+        if result.exit_code != 0:
+            raise RuntimeError("E2B task identity, tools, or workspace are not ready")
 
     @override
     async def run(
@@ -93,13 +103,23 @@ class SyndicateNexAUAgent(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        self.cleanup_receipt = None
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
-        self.cleanup_receipt = await HarborAgent(environment).run(runtime_command())
+        self.cleanup_receipt = await HarborAgent(
+            _sandbox(environment),
+            harness_dir=self.harness_dir,
+            framework_lock=self.framework_lock,
+        ).run(self.request, self.api_key)
         if self._controller_binding is not None and self._controller_root is not None:
             emit_cleanup_receipt(
-                self._controller_binding,
-                self.cleanup_receipt,
-                self._controller_root,
+                self._controller_binding, self.cleanup_receipt, self._controller_root,
                 datetime.now(UTC),
             )
+
+    def bind_controller_receipt(
+        self, binding: ControllerTrialBinding, controller_root: Path
+    ) -> None:
+        """Bind controller identity before Harbor starts this agent."""
+        self._controller_binding = binding
+        self._controller_root = controller_root

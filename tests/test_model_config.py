@@ -56,7 +56,9 @@ def test_reject_unverified_deployment(tmp_path: Path, deployment: str) -> None:
         load_model_config(env_file(tmp_path, deployment=deployment))
 
 
-@pytest.mark.parametrize("key", ["", " ", "${HOST_SECRET}"])
+@pytest.mark.parametrize(
+    "key", ["", " ", "${HOST_SECRET}", "`command`", 'unterminated"quote', 'one" two']
+)
 def test_reject_empty_or_interpolated_key(tmp_path: Path, key: str) -> None:
     with pytest.raises(ModelConfigError):
         load_model_config(env_file(tmp_path, key=key))
@@ -91,11 +93,27 @@ def test_no_ambient_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         load_model_config(tmp_path / "missing")
 
 
+def test_reject_assignment_without_equals(tmp_path: Path) -> None:
+    path = env_file(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            'AZURE_OPENAI_API_KEY="test-secret"', "AZURE_OPENAI_API_KEY"
+        )
+    )
+    with pytest.raises(ModelConfigError):
+        load_model_config(path)
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
         "http://example.com",
         "https://user:password@example.com",
+        "https://:password@example.com",
+        "https://@example.com",
+        "https:///missing-host",
+        "https://example.com:65536/",
+        "https://example.com/white space",
         "https://example.com/?key=secret",
         "https://example.com/#secret",
         "not-a-url",
