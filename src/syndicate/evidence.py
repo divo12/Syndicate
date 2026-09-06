@@ -18,18 +18,18 @@ from syndicate.evidence_contracts import (
     TraceQuery,
 )
 from syndicate.observability.neatlogs_readback import (
+    ExpectedTrace,
     NeatlogsReadbackReader,
     NeatlogsReadbackReceipt,
-    NeatlogsTraceRef,
     ReadbackSpan,
 )
 
 
 def matches(span: ReadbackSpan, query: TraceQuery) -> bool:
     fields = ((query.node_name, span.node_name), (query.node_type, span.node_type))
-    if not all(expected is None or expected == actual for expected, actual in fields):
-        return False
-    return any(
+    return all(
+        expected is None or expected == actual for expected, actual in fields
+    ) and any(
         query.text in value
         for value in (span.node_name, span.input_text, span.output_text)
         if value is not None
@@ -79,7 +79,13 @@ class EvidenceReader:
         if grant is None:
             return EvidenceStatus.FORBIDDEN, None
         try:
-            receipt = self.remote.read(grant.link, NeatlogsTraceRef(trace_ref))
+            receipt = self.remote.fetch(
+                ExpectedTrace(
+                    link=grant.link,
+                    trace_ref=trace_ref,
+                    expected_span_refs=grant.expected_span_refs,
+                )
+            )
         except (OSError, ValueError):
             return EvidenceStatus.INCOMPLETE, None
         if (receipt.link, receipt.trace_ref, receipt.semantic_digest) != (
