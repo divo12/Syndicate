@@ -282,5 +282,5 @@ def propose(
         )
     except (OSError, RuntimeError, TimeoutError) as error:
         raise ValueError("Improvement dispatch did not complete") from error
-    reference = store.write(command, ArtifactKind.CANDIDATE_RECEIPT, result)
+    reference = store.write(command, ArtifactKind.CANDIDATE, result)
     return _receipt(command, reference)
