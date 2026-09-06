@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
-from syndicate import benchmark_manifest as benchmark
-from syndicate.budget_policy import CampaignBudgetPolicy
-from syndicate.cli_envelope import Digest, PreflightCommand, WireModel
-from syndicate.model_config import ModelSettings, load_model_config
+from syndicate.models.budget import CampaignBudgetPolicy
+from syndicate.models.envelope import Digest, PreflightCommand, WireModel
+from syndicate.models.model_config import ModelSettings, load_model_config
+from syndicate.repositories import benchmark_manifest as benchmark
 
 
 class AdmissionError(ValueError):

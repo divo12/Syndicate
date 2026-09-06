@@ -11,6 +11,7 @@ dependencies = [
   "harbor[e2b]==0.22.0",
   "e2b==2.26.0",
   "openai==2.54.0",
+  "httpx==0.28.1",
   "neatlogs",
   "nexau @ git+https://github.com/nex-agi/NexAU.git@35ee1861546db3cb280a6e17e38a74060d7c96c3",
 ]

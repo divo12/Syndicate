@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from syndicate.shell import (
+from syndicate.models.shell import (
     ShellBinding,
     ShellExecution,
     ShellRequest,

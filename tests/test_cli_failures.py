@@ -9,8 +9,8 @@ import test_preflight as fixtures
 from pydantic import ValidationError
 
 from syndicate.cli import main
-from syndicate.cli_envelope import CommandReceipt, ErrorReason
-from syndicate.preflight import ControllerConfig
+from syndicate.models.envelope import CommandReceipt, ErrorReason
+from syndicate.services.preflight import ControllerConfig
 
 checkout = fixtures.checkout
 controller = fixtures.controller

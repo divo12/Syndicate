@@ -4,10 +4,12 @@ import sys
 from importlib.metadata import distribution, version
 from typing import Literal, Self
 
+from nexau.archs.main_sub.execution.stop_reason import AgentStopReason
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.baseline import BaselineManifest
-from syndicate.budget_policy import BudgetCap
+from syndicate.models.baseline import BaselineManifest
+from syndicate.models.budget import BudgetCap, ProductRole
+from syndicate.models.model_config import ModelSettings
 
 
 class RuntimeIdentity(BaseModel):
@@ -70,3 +72,42 @@ class RuntimeRequest(BaseModel):
         if self.shell_timeout_ms > self.budget.max_seconds * 1000:
             raise ValueError("Shell timeout exceeds dispatch deadline")
         return self
+
+
+class RoleDispatchRequest(BaseModel):
+    """Bounded dispatch for a fixed product role; the caller owns credentials."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    model: ModelSettings
+    role: ProductRole
+    prompt: str = Field(min_length=1)
+    budget: BudgetCap
+    usage_ref: str = Field(min_length=1)
+    max_iterations: int = Field(gt=0)
+    max_context_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0)
+    max_retries: Literal[0] = 0
+
+    @model_validator(mode="after")
+    def bounded(self) -> Self:
+        if not self.usage_ref.strip():
+            raise ValueError("Usage reference must not be blank")
+        reserved = self.max_iterations * (
+            self.max_context_tokens + self.max_output_tokens
+        )
+        if reserved > self.budget.max_tokens:
+            raise ValueError("Worst-case invocation tokens exceed dispatch budget")
+        if self.max_output_tokens >= self.max_context_tokens:
+            raise ValueError("Output reserve must leave room for input")
+        return self
+
+
+class RoleDispatchReceipt(BaseModel):
+    """Returned in memory to the controller; never written as a payload artifact."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    final_text: str
+    usage_ref: str = Field(min_length=1)
+    stop_reason: AgentStopReason | None

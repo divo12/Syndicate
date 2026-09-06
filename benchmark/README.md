@@ -8,13 +8,13 @@ Initialize it after cloning Syndicate:
 git submodule update --init benchmark/ITSMBench
 ```
 
-The checkout stores tasks; `syndicate.benchmark_manifest` validates their provenance,
+The checkout stores tasks; `syndicate.repositories.benchmark_manifest` validates their provenance,
 metadata, and operator-declared splits. It does not run the benchmark or choose splits.
 From the Syndicate repository root:
 
 ```python
 from pathlib import Path
-from syndicate.benchmark_manifest import (
+from syndicate.repositories.benchmark_manifest import (
     Assignment, BenchmarkManifest, ITSMBENCH_REVISION, Split,
 )
 

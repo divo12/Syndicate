@@ -8,7 +8,7 @@ from e2b import AsyncSandbox
 from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox_async.commands.command_handle import AsyncCommandHandle
 
-from syndicate.shell import ShellExecution, ShellRequest, ShellStatus
+from syndicate.models.shell import ShellExecution, ShellRequest, ShellStatus
 
 
 class CaptureLimitError(RuntimeError):

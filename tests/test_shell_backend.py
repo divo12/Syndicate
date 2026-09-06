@@ -8,8 +8,8 @@ from e2b import AsyncSandbox
 from e2b.sandbox.commands.command_handle import CommandExitException, CommandResult
 from e2b.sandbox_async.commands.command_handle import AsyncCommandHandle
 
-from syndicate.shell import ShellRequest, ShellStatus
-from syndicate.shell_backend import CaptureLimitError, E2BShell, _Capture
+from syndicate.adapters.e2b_shell import CaptureLimitError, E2BShell, _Capture
+from syndicate.models.shell import ShellRequest, ShellStatus
 
 
 def transport() -> tuple[Mock, AsyncMock]:
