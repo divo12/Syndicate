@@ -1,4 +1,4 @@
-"""Neatlogs-only transient capture; durable evidence is verified by readback."""
+"""Transient Neatlogs identity capture with one explicit workflow root."""
 
 from contextlib import AbstractContextManager
 from enum import StrEnum
@@ -17,7 +17,6 @@ class CaptureState(StrEnum):
 
 class RunLink(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
     operation_id: UUID
     attempt_id: UUID
     run_id: UUID
@@ -26,7 +25,6 @@ class RunLink(BaseModel):
 
 class CaptureReceipt(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
     link: RunLink
     state: CaptureState
     reason: str
@@ -54,7 +52,7 @@ class _RedactedEvidence(BaseModel):
     provider_output: str
     model_input: str
     model_output: str
-    count: int = Field(ge=1)
+    count: int = Field(ge=0)
 
 
 class SpanContext(Protocol):
@@ -70,13 +68,10 @@ class SdkSpan(Protocol):
 
 class CaptureSdk(Protocol):
     def init(self, *, workflow_name: str, register_shutdown_handlers: bool) -> None: ...
-
     def trace(
         self, name: str, *, kind: str, **attributes: str
     ) -> AbstractContextManager[SdkSpan, bool | None]: ...
-
-    def flush(self) -> None: ...
-
+    def flush(self) -> bool: ...
     def shutdown(self) -> None: ...
 
 
@@ -86,8 +81,7 @@ class _TrackedSpan(AbstractContextManager[SdkSpan]):
         context: AbstractContextManager[SdkSpan, bool | None],
         capture: "NeatlogsCapture",
     ) -> None:
-        self._context = context
-        self._capture = capture
+        self._context, self._capture = context, capture
 
     def __enter__(self) -> SdkSpan:
         span = self._context.__enter__()
@@ -104,22 +98,26 @@ class _TrackedSpan(AbstractContextManager[SdkSpan]):
 
 
 class NeatlogsCapture:
-    """Creates SDK spans without storing trace payloads on disk."""
+    """Capture IDs inside one workflow root; never store span payloads locally."""
 
     def __init__(self, workflow_name: str, sdk: CaptureSdk | None = None) -> None:
         self.workflow_name = workflow_name
         self._sdk = sdk if sdk is not None else cast(CaptureSdk, neatlogs)
+        self._workflow: _TrackedSpan | None = None
         self._trace_ref: str | None = None
         self._span_refs: list[str] = []
         self._blocked = False
 
     def start(self) -> None:
-        self._trace_ref = None
-        self._span_refs = []
-        self._blocked = False
+        self._trace_ref, self._span_refs, self._blocked = None, [], False
         self._sdk.init(
             workflow_name=self.workflow_name, register_shutdown_handlers=False
         )
+        workflow = _TrackedSpan(
+            self._sdk.trace(self.workflow_name, kind="WORKFLOW"), self
+        )
+        workflow.__enter__()
+        self._workflow = workflow
 
     def span(
         self,
@@ -150,12 +148,9 @@ class NeatlogsCapture:
 
     def flush(self, link: RunLink) -> CaptureReceipt:
         if self._blocked or self._trace_ref is None or not self._span_refs:
-            return CaptureReceipt(
-                link=link,
-                state=CaptureState.BLOCKED,
-                reason="Neatlogs span identity is missing, mixed, or duplicate",
-            )
-        self._sdk.flush()
+            return self._blocked_receipt(link, "Neatlogs span identity is invalid")
+        if not self._sdk.flush():
+            return self._blocked_receipt(link, "Neatlogs flush did not complete")
         return CaptureReceipt(
             link=link,
             state=CaptureState.FLUSHED_UNVERIFIED,
@@ -165,20 +160,28 @@ class NeatlogsCapture:
         )
 
     def shutdown(self) -> None:
+        if self._workflow is not None:
+            self._workflow.__exit__(None, None, None)
+            self._workflow = None
         self._sdk.shutdown()
 
+    def _blocked_receipt(self, link: RunLink, reason: str) -> CaptureReceipt:
+        return CaptureReceipt(link=link, state=CaptureState.BLOCKED, reason=reason)
+
     def _record(self, context: SpanContext) -> None:
-        trace_ref = self._id(context.trace_id, 32)
-        span_ref = self._id(context.span_id, 16)
+        trace_ref, span_ref = (
+            self._id(context.trace_id, 32),
+            self._id(context.span_id, 16),
+        )
         if trace_ref is None or span_ref is None:
             self._blocked = True
-            return
-        if self._trace_ref is None:
+        elif self._trace_ref is None:
             self._trace_ref = trace_ref
+            self._span_refs.append(span_ref)
         elif self._trace_ref != trace_ref or span_ref in self._span_refs:
             self._blocked = True
-            return
-        self._span_refs.append(span_ref)
+        else:
+            self._span_refs.append(span_ref)
 
     def _id(self, value: int, width: int) -> str | None:
         if value <= 0 or value >= 16**width:

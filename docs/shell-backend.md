@@ -1,27 +1,42 @@
-# In-container shell backend — M1-T1 / P07b
+# E2B shell backend
 
-`ContainerShell(work_dir, capture_limit_bytes=8_000_000)` implements P07's
-`SandboxShell` protocol. Construct it only in the task container as the dedicated
-nonroot execution UID. It refuses root/host use; there is no host fallback mode.
-Initial cwd must resolve inside the workspace. Directory descriptors opened
-without following symlinks prevent a background rename/symlink race at spawn.
-This constrains the requested cwd, not arbitrary shell filesystem access;
-protected files must be absent/unreadable through the outer sandbox policy.
+`E2BShell(sandbox, work_dir)` implements `SandboxShell` on the controller.
+The supplied `e2b.AsyncSandbox` must be an exclusively owned task VM with a
+dedicated user/group at UID/GID 10001 and the approved workspace already prepared.
+The controller owns creation and deletion; the adapter never creates a second VM
+or executes a local subprocess. Model and E2B credentials stay on the controller.
 
-Each command starts its own process group with separate raw stdout/stderr files
-under `/tmp/syndicate-shell-*`. Timeouts, cancellation and close kill/reap tracked
-groups. Background jobs retain a deadline after returning their PID; close is
-idempotent and prohibits further execution. Raw capture files remain for export.
+The trusted remote bootstrap immediately uses `setpriv` to drop user/group,
+clear supplementary groups, and disable new privileges. Task shells skip login
+profiles. Workspace checks happen after entering the requested directory, and
+all interpolated task strings are shell-quoted before crossing the root bootstrap.
+This confines the initial cwd, not arbitrary task filesystem access: verifier and
+solution files must remain absent until cleanup succeeds.
 
-The Harbor adapter **must stop and confirm the entire dedicated UID** before
-verifier injection, including descendants that used `setsid` to escape groups.
-Backend group cleanup alone is not that security boundary. The UID stop also
-handles abrupt runtime death before backend cleanup can execute.
+E2B streams output to bounded in-memory captures. Crossing either limit terminates
+the task UID and marks output incomplete. The SDK also buffers output internally:
+its allocation may exceed our cap by one transport chunk before the callback
+stops consumption. No output files or local trace fallback are created.
 
-Compatibility changes: a hard inherited Linux file-size limit bounds each
-regular file written by commands (including capture files); reaching the capture
-limit marks output incomplete. Record the configured limit in runtime baseline
-settings. Foreground completion also kills leftover group members; asynchronous
-work must use the explicit background request. No live output callback is added.
-Raw negative return codes retain signal facts; timeout remains a distinct status.
-Background receipt is a startup snapshot; later output remains in its capture files.
+Each remote command has a server-side deadline in addition to its controller
+deadline. A small supervisor kills ordinary child-group members on completion
+while preserving the exit code. Background replies are incomplete startup snapshots;
+finished monitor tasks and their captures are released immediately.
+
+`close()` kills and verifies the entire dedicated UID, including descendants that
+used `setsid`, then leaves the VM intact for verification. A cleanup error must
+block the verifier. Timeout, output overflow, or stream failure closes the shell
+to further commands. The outer owner must delete the VM even if cleanup fails.
+
+Run offline checks with `python -m pytest tests/test_shell_backend.py`.
+For an opt-in real E2B smoke (one VM, 120-second TTL, deleted in `finally`):
+
+```sh
+uv run --no-project --python .venv/bin/python --env-file /path/to/private.env \
+  python scripts/e2b_smoke.py
+```
+
+Only `E2B_API_KEY` is needed for the smoke; it makes no model calls. Production
+ITSMBench runs still require compatible, provenance-reviewed E2B task templates.
+HDP's modified Harbor fork and prebuilt aliases are not silently substituted for
+Syndicate's pinned runtime.

@@ -64,8 +64,9 @@ class Sdk:
             AbstractContextManager[SdkSpan, bool | None], SpanManager(self.spans.pop(0))
         )
 
-    def flush(self) -> None:
+    def flush(self) -> bool:
         self.flushed = True
+        return True
 
     def shutdown(self) -> None:
         return None
@@ -101,7 +102,9 @@ def captured_span(
 
 
 def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
-    sdk = Sdk((Span(Context(1, 2), []), Span(Context(1, 3), [])))
+    sdk = Sdk(
+        (Span(Context(1, 2), []), Span(Context(1, 3), []), Span(Context(1, 4), []))
+    )
     capture = NeatlogsCapture("test", sdk)
     capture.start()
     with captured_span(capture, "first"):
@@ -111,20 +114,34 @@ def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
     receipt = capture.flush(link())
     assert receipt.state is CaptureState.FLUSHED_UNVERIFIED
     assert receipt.trace_ref == "0" * 31 + "1"
-    assert receipt.expected_span_refs == ("0" * 15 + "2", "0" * 15 + "3")
+    assert receipt.expected_span_refs == (
+        "0" * 15 + "2",
+        "0" * 15 + "3",
+        "0" * 15 + "4",
+    )
     assert sdk.flushed
+
+
+def test_failed_flush_blocks_receipt() -> None:
+    sdk = Sdk((Span(Context(1, 2), []), Span(Context(1, 3), [])))
+    sdk.flush = lambda: False  # type: ignore[method-assign]
+    capture = NeatlogsCapture("test", sdk)
+    capture.start()
+    with captured_span(capture, "tool"):
+        pass
+    assert capture.flush(link()).state is CaptureState.BLOCKED
 
 
 def test_mixed_duplicate_or_missing_identity_blocks_without_flush() -> None:
     for spans in (
-        (Span(Context(1, 2), []), Span(Context(2, 3), [])),
-        (Span(Context(1, 2), []), Span(Context(1, 2), [])),
-        (Span(Context(0, 2), []),),
+        (Span(Context(1, 2), []), Span(Context(2, 3), []), Span(Context(2, 4), [])),
+        (Span(Context(1, 2), []), Span(Context(1, 2), []), Span(Context(1, 3), [])),
+        (Span(Context(0, 2), []), Span(Context(0, 3), [])),
     ):
         sdk = Sdk(spans)
         capture = NeatlogsCapture("test", sdk)
         capture.start()
-        for index in range(len(spans)):
+        for index in range(len(spans) - 1):
             with captured_span(capture, str(index)):
                 pass
         assert capture.flush(link()).state is CaptureState.BLOCKED
@@ -132,11 +149,21 @@ def test_mixed_duplicate_or_missing_identity_blocks_without_flush() -> None:
 
 
 def test_sdk_receives_only_redacted_and_distinct_evidence() -> None:
-    span = Span(Context(1, 2), [])
-    capture = NeatlogsCapture("test", Sdk((span,)))
+    span = Span(Context(1, 3), [])
+    capture = NeatlogsCapture("test", Sdk((Span(Context(1, 2), []), span)))
     capture.start()
     with captured_span(capture, "redacted"):
         pass
     values = tuple(value for _, value in span.attributes if isinstance(value, str))
     assert "secret" not in " ".join(values)
     assert values[:2] == ("model [REDACTED]", "model [REDACTED] output")
+
+
+def test_secret_free_evidence_is_valid() -> None:
+    span = Span(Context(1, 3), [])
+    capture = NeatlogsCapture("test", Sdk((Span(Context(1, 2), []), span)))
+    capture.start()
+    clean = RedactionPolicy(secrets=(__import__("pydantic").SecretStr("secret"),))
+    with capture.span(link(), "clean", "provider", "output", "model", "result", clean):
+        pass
+    assert capture.flush(link()).state is CaptureState.FLUSHED_UNVERIFIED
