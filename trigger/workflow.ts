@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   type CommandReceipt,
   type PythonInvocation,
@@ -78,5 +81,3 @@ export async function runWorkflow(
   const select = await runStage("select", requests.select, invoke);
   return { execute, judge, collect, improve, compare, select };
 }
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
