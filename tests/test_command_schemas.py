@@ -43,6 +43,10 @@ def reference(kind: str, char: str) -> str:
 
 
 def addition(operation: str) -> str:
+    if operation == "run-trial":
+        return '"runtime_request_ref":{' + reference("runtime_request", "f") + "},"
+    if operation == "judge-task":
+        return '"judge_input_ref":{' + reference("judge_input", "f") + "},"
     if operation == "collect-reports":
         return '"expected_reports_ref":{' + reference("expected_reports", "f") + "},"
     if operation == "compare-harness":
@@ -61,6 +65,8 @@ def addition(operation: str) -> str:
             + reference("lineage", "e")
             + "},"
         )
+    if operation == "propose-harness":
+        return '"proposal_input_ref":{' + reference("proposal_input", "f") + "},"
     return ""
 
 

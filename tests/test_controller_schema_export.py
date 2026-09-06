@@ -4,6 +4,7 @@ from uuid import UUID
 from syndicate.cli import request_path, write_request
 from syndicate.models.budget import BudgetCap
 from syndicate.models.commands import RunTrialCommand
+from syndicate.models.envelope import ArtifactKind, ArtifactRef
 from syndicate.services.schema_export import schema_artifact_paths, write_schemas
 
 
@@ -18,6 +19,12 @@ def command() -> RunTrialCommand:
         runtime_image_hash="d" * 64,
         judge_spec_hash="e" * 64,
         verifier_version="v1",
+        runtime_request_ref=ArtifactRef(
+            kind=ArtifactKind.RUNTIME_REQUEST,
+            operation_id=UUID(int=3),
+            attempt_id=UUID(int=4),
+            sha256="f" * 64,
+        ),
         budget=BudgetCap(max_tokens=1, max_seconds=1, max_spend_microusd=1),
     )
 
