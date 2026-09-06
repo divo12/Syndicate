@@ -5,7 +5,7 @@ import stat
 from collections.abc import Callable
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
 from syndicate.candidate_validation import (
     CandidateSeal,
@@ -18,15 +18,12 @@ from syndicate.improvement_contracts import (
     CheckStatus,
     FailureDiagnosis,
     HarnessChangeManifest,
+    ImprovementObject,
     MetricEffect,
 )
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 FileContent = Annotated[str, Field()]
-
-
-class ImprovementObject(BaseModel):
-    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
 
 class ProposalEdit(ImprovementObject):
