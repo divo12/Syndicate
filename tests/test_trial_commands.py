@@ -6,7 +6,7 @@ import pytest
 from syndicate.cli import main
 from syndicate.models.budget import BudgetCap
 from syndicate.models.commands import JudgeTaskCommand, RunTrialCommand
-from syndicate.models.envelope import CommandStatus
+from syndicate.models.envelope import ArtifactKind, ArtifactRef, CommandStatus
 from syndicate.models.jobs import ExecutorKind, JobSubmission, TaskResult
 from syndicate.repositories.artifact_store import ArtifactStore
 from syndicate.repositories.jobs import MemoryJobStore
@@ -35,6 +35,12 @@ def test_run_trial_and_judge_task_handlers_are_installed(tmp_path: Path) -> None
         runtime_image_hash=digest,
         judge_spec_hash=digest,
         verifier_version="1",
+        runtime_request_ref=ArtifactRef(
+            kind=ArtifactKind.RUNTIME_REQUEST,
+            operation_id=UUID(int=1),
+            attempt_id=UUID(int=2),
+            sha256=digest,
+        ),
         budget=_budget(),
     )
     receipt = execute_run_trial(trial, store)
@@ -46,6 +52,12 @@ def test_run_trial_and_judge_task_handlers_are_installed(tmp_path: Path) -> None
             task_id="regex-log",
             judge_spec_hash=digest,
             run_refs=receipt.artifact_refs,
+            judge_input_ref=ArtifactRef(
+                kind=ArtifactKind.JUDGE_INPUT,
+                operation_id=UUID(int=3),
+                attempt_id=UUID(int=4),
+                sha256=digest,
+            ),
             budget=_budget(),
         ),
         store,
