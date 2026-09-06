@@ -97,8 +97,9 @@ def test_candidate_check_uses_fixed_argv_and_candidate_root(
     )
     calls: list[tuple[str, ...]] = []
 
-    def run(arguments: tuple[str, ...], **_: object) -> SimpleNamespace:
+    def run(arguments: tuple[str, ...], **kwargs: object) -> SimpleNamespace:
         calls.append(arguments)
+        assert kwargs.get("cwd") == candidate
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("syndicate.controllers.live_handlers.subprocess.run", run)
@@ -107,3 +108,5 @@ def test_candidate_check_uses_fixed_argv_and_candidate_root(
     assert calls == [("uv", "run", "pytest", "test_candidate.py")]
     with pytest.raises(ValueError, match="explicit"):
         _run_check(workspace, "sh -c unsafe")
+    with pytest.raises(ValueError, match="candidate-relative"):
+        _run_check(workspace, "uv run pytest --basetemp=/tmp/x")

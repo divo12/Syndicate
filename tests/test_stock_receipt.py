@@ -59,7 +59,7 @@ def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> N
     receipt = authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1))
     loaded = load_cleanup_receipt(identity, tmp_path)
     terminal = postprocess_stock_result(
-        identity, loaded, result(identity), "harbor:run"
+        identity, loaded, result(identity), "harbor:run", tmp_path
     )
     assert receipt == loaded
     assert terminal.outcome is RunOutcome.FAIL
@@ -68,7 +68,10 @@ def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> N
     with pytest.raises(FileExistsError):
         authority(identity, tmp_path).issue(ENDED)
     assert load_cleanup_receipt(identity, tmp_path) == receipt
-    assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == ["cleanup.json"]
+    assert {p.name for p in tmp_path.rglob("*") if p.is_file()} == {
+        "cleanup.json",
+        "issued",
+    }
 
 
 def test_failed_write_leaves_no_partial_receipt(
@@ -121,7 +124,9 @@ def test_rejects_cleanup_identity(field: str, tmp_path: Path) -> None:
         update={field: "different" if field == "task_id" else uuid4()}
     )
     with pytest.raises(ValueError, match="authentic"):
-        postprocess_stock_result(identity, invalid, result(identity), "harbor:run")
+        postprocess_stock_result(
+            identity, invalid, result(identity), "harbor:run", tmp_path
+        )
 
 
 @pytest.mark.parametrize("field", ["run", "task", "adapter", "missing_result"])
@@ -143,6 +148,7 @@ def test_rejects_stock_identity_and_missing_result(field: str, tmp_path: Path) -
             authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
             invalid,
             "harbor:run",
+            tmp_path,
         )
 
 
@@ -160,6 +166,7 @@ def test_rejects_cleanup_outside_agent_interval(offset: int, tmp_path: Path) -> 
             authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
             invalid,
             "harbor:run",
+            tmp_path,
         )
 
 
@@ -186,6 +193,7 @@ def test_rejects_invalid_intervals(phase: str, defect: str, tmp_path: Path) -> N
             authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
             invalid,
             "harbor:run",
+            tmp_path,
         )
 
 

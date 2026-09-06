@@ -43,7 +43,7 @@ def test_repository_and_adapter_layers() -> None:
     shell = import_module("syndicate.adapters.e2b_shell")
     harbor = import_module("syndicate.adapters.harbor_agent")
     adapter = import_module("syndicate.adapters.harbor_adapter")
-    assert jobs.MemoryJobStore is not None
+    assert jobs.SqliteJobStore is not None
     assert manifest.BenchmarkManifest is not None
     assert shell.E2BShell is not None
     assert harbor.HarborAgent is not None

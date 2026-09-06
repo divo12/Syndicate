@@ -36,7 +36,12 @@ class RunLink(BaseModel):
 
 
 class CaptureReceipt(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        strict=True,
+        revalidate_instances="always",
+    )
     link: RunLink
     state: CaptureState
     reason: str

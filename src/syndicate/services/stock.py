@@ -16,7 +16,7 @@ from syndicate.services.benchmark import RunReceipt, classify_verifier
 AGENT_NAME = "syndicate-nexau"
 AGENT_IMPORT = "syndicate.adapters.harbor_adapter.SyndicateNexAUAgent"
 CONTROLLER_UID = 10001
-_ISSUED_RECEIPTS: set[str] = set()
+ISSUED_NAME = "issued"
 
 
 class ControllerTrialBinding(WireModel):
@@ -99,8 +99,8 @@ def _write_settled_cleanup(
             follow_symlinks=False,
         )
         os.unlink(temporary, dir_fd=parent)
+        _write_issued(parent, _receipt_digest(receipt))
         os.fsync(parent)
-        _ISSUED_RECEIPTS.add(_receipt_digest(receipt))
     except BaseException:
         try:
             os.unlink(temporary, dir_fd=parent)
@@ -122,7 +122,7 @@ def load_cleanup_receipt(
             receipt = CleanupControlReceipt.model_validate_json(source.read())
     finally:
         os.close(parent)
-    if not _matches(receipt, binding) or not _authentic(receipt):
+    if not _matches(receipt, binding) or not _authentic(receipt, root):
         raise ValueError("Cleanup receipt is not controller-authentic")
     return receipt
 
@@ -132,9 +132,10 @@ def postprocess_stock_result(
     cleanup: CleanupControlReceipt,
     result: TrialResult,
     raw_result_ref: str,
+    root: Path,
 ) -> RunReceipt:
     """Correlate one stock Harbor result; never invoke a verifier."""
-    if not _matches(cleanup, binding) or not _authentic(cleanup):
+    if not _matches(cleanup, binding) or not _authentic(cleanup, root):
         raise ValueError("Cleanup receipt is not controller-authentic")
     if result.id != binding.run_id:
         raise ValueError("Harbor run ID does not match controller binding")
@@ -183,14 +184,44 @@ def _receipt_parent(binding: ControllerTrialBinding, root: Path) -> int:
         raise
 
 
-def _authentic(receipt: CleanupControlReceipt) -> bool:
+def _write_issued(parent: int, digest: str) -> None:
+    descriptor = os.open(
+        ISSUED_NAME,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=parent,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(digest)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        try:
+            os.unlink(ISSUED_NAME, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _issued_digest(binding: ControllerTrialBinding, root: Path) -> str:
+    parent = _receipt_parent(binding, root)
+    try:
+        descriptor = os.open(ISSUED_NAME, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        with os.fdopen(descriptor, encoding="utf-8") as source:
+            return source.read()
+    finally:
+        os.close(parent)
+
+
+def _authentic(receipt: CleanupControlReceipt, root: Path) -> bool:
     return (
         receipt.cleanup.complete
         and receipt.cleanup.uid == CONTROLLER_UID
         and receipt.uid == CONTROLLER_UID
         and receipt.agent_import == AGENT_IMPORT
         and receipt.agent_name == AGENT_NAME
-        and _receipt_digest(receipt) in _ISSUED_RECEIPTS
+        and _issued_digest(receipt, root) == _receipt_digest(receipt)
     )
 
 

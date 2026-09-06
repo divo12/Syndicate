@@ -28,7 +28,7 @@ from syndicate.models.judging import (
     RunCoverage,
     TaskReport,
 )
-from syndicate.repositories.jobs import MemoryJobStore
+from syndicate.repositories.jobs import SqliteJobStore
 from syndicate.services.candidate import create_candidate_workspace
 from syndicate.services.executors import SimulatedExecutor
 from syndicate.services.improvement import apply_proposal
@@ -36,8 +36,8 @@ from syndicate.services.learning_loop import _select, run_outer_loop
 from syndicate.services.lineage import HarnessLineage
 
 
-def _job() -> Job:
-    store = MemoryJobStore()
+def _job(tmp_path: Path) -> Job:
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
     return store.create(
         JobSubmission(
             task_ids=("regex-log", "extract-elf"), max_iterations=3, patience=2
@@ -45,16 +45,16 @@ def _job() -> Job:
     )
 
 
-def test_outer_loop_accepts_on_strict_improvement_and_stops() -> None:
-    receipt = run_outer_loop(_job())
+def test_outer_loop_accepts_on_strict_improvement_and_stops(tmp_path: Path) -> None:
+    receipt = run_outer_loop(_job(tmp_path))
     assert receipt.stop_reason is StopReason.ALL_TASKS_PASSED
     assert receipt.best_score == 1
     assert receipt.iterations[0].accepted is True
     assert receipt.iterations[1].accepted is True
 
 
-def test_outer_loop_accepts_a_single_task_from_a_zero_baseline() -> None:
-    store = MemoryJobStore()
+def test_outer_loop_accepts_a_single_task_from_a_zero_baseline(tmp_path: Path) -> None:
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
     job = store.create(
         JobSubmission(task_ids=("regex-log",), max_iterations=3, patience=2)
     )
@@ -67,15 +67,15 @@ def test_outer_loop_accepts_a_single_task_from_a_zero_baseline() -> None:
 def test_outer_loop_uses_assess_comparison_and_lineage(tmp_path: Path) -> None:
     digest = f"sha256:{0:064x}"
     lineage = HarnessLineage(tmp_path / "lineage.sqlite", digest, digest)
-    job = _job()
+    job = _job(tmp_path)
     incumbent = SimulatedExecutor().run(job.task_ids, 0)
     candidate = SimulatedExecutor().run(job.task_ids, 1)
     assert _select(incumbent, candidate, job, lineage, 0, 1) is True
     assert lineage.current().harness_hash == f"sha256:{1:064x}"
 
 
-def test_infra_error_is_not_a_verified_failure() -> None:
-    store = MemoryJobStore()
+def test_infra_error_is_not_a_verified_failure(tmp_path: Path) -> None:
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
     job = store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2))
     infra = (
         TaskResult(task_id="regex-log", outcome=TaskOutcome.INFRA_ERROR, reward=0.0),
@@ -86,7 +86,7 @@ def test_infra_error_is_not_a_verified_failure() -> None:
 def test_rejected_generation_is_not_used_as_incumbent(tmp_path: Path) -> None:
     digest = f"sha256:{0:064x}"
     lineage = HarnessLineage(tmp_path / "lineage.sqlite", digest, digest)
-    store = MemoryJobStore()
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
     job = store.create(
         JobSubmission(
             task_ids=("regex-log", "extract-elf"), max_iterations=4, patience=3
@@ -175,6 +175,6 @@ def test_improve_port_can_call_apply_proposal(tmp_path: Path) -> None:
         called.append(generation)
         return generation + 1
 
-    receipt = run_outer_loop(_job(), improve=improve)
+    receipt = run_outer_loop(_job(tmp_path), improve=improve)
     assert called == [0]
     assert receipt.stop_reason is StopReason.ALL_TASKS_PASSED

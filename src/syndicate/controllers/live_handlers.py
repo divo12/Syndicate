@@ -92,6 +92,15 @@ async def _run_trial(
     if command.task_id not in tuple(item.task_id for item in assignments):
         raise ValueError("Task is not assigned to this controller")
     task = benchmark_root / "tasks" / command.task_id
+    if not task.is_dir():
+        raise ValueError("Task is not present in the approved checkout")
+    if (benchmark_root / ".git").exists():
+        from syndicate.repositories.benchmark_manifest import (
+            ITSMBENCH_REVISION,
+            BenchmarkManifest,
+        )
+
+        BenchmarkManifest.load(benchmark_root, ITSMBENCH_REVISION, assignments)
     config = TrialConfig(
         task=TaskConfig(path=task),
         trials_dir=run / "harbor",
@@ -117,7 +126,7 @@ async def _run_trial(
     result = await trial.run()
     cleanup = load_cleanup_receipt(binding, control_root)
     return postprocess_stock_result(
-        binding, cleanup, result, "harbor:trial:" + str(trial.id)
+        binding, cleanup, result, "harbor:trial:" + str(trial.id), control_root
     )
 
 
@@ -155,11 +164,18 @@ def _propose(input: ProposalInput, key: SecretStr) -> str:
         return asyncio.run(dispatch_role(request, (), client)).final_text
 
 
+def _escapes_candidate(argument: str) -> bool:
+    if argument.startswith("-") and "=" not in argument:
+        return False
+    value = argument.split("=", 1)[1] if "=" in argument else argument
+    return value.startswith("/") or ".." in Path(value).parts
+
+
 def _run_check(workspace: CandidateWorkspace, command: str) -> bool:
     arguments = tuple(shlex.split(command))
     if arguments[:3] != ("uv", "run", "pytest") or not arguments[3:]:
         raise ValueError("Candidate checks must be an explicit uv run pytest command")
-    if any(path.startswith("/") or ".." in Path(path).parts for path in arguments[3:]):
+    if any(_escapes_candidate(item) for item in arguments[3:]):
         raise ValueError("Candidate checks must use candidate-relative paths")
     try:
         result = subprocess.run(
