@@ -128,3 +128,24 @@ def test_seal_reuses_one_candidate_content_snapshot(
 
     assert reads == ["prompt.md"]
     assert seal.changed_paths == ("prompt.md",)
+
+
+def test_seal_rechecks_the_tree_after_capturing_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    original_files = candidate_validation._candidate_files
+
+    def add_protected_file_after_scan(root: Path) -> tuple[str, ...]:
+        paths = original_files(root)
+        root.joinpath("protected.py").write_text("escape", encoding="utf-8")
+        return paths
+
+    monkeypatch.setattr(
+        candidate_validation, "_candidate_files", add_protected_file_after_scan
+    )
+
+    with pytest.raises(CandidateValidationError, match="protected"):
+        seal_candidate(workspace)

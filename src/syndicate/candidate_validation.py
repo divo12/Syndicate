@@ -31,12 +31,14 @@ def seal_candidate(workspace: CandidateWorkspace) -> CandidateSeal:
     """Reject unsafe candidate content before producing deterministic hashes."""
     candidate_paths = _candidate_files(workspace.candidate_root)
     allowed_paths = {path.as_posix() for path in workspace.allowed_paths}
-    unexpected = set(candidate_paths) - allowed_paths
-    if unexpected:
-        raise CandidateValidationError("candidate changed a protected path")
+    _validate_candidate_paths(candidate_paths, allowed_paths)
     candidate_files = _snapshot_candidate_files(
         workspace.candidate_root, candidate_paths
     )
+    confirmed_paths = _candidate_files(workspace.candidate_root)
+    _validate_candidate_paths(confirmed_paths, allowed_paths)
+    if confirmed_paths != candidate_paths:
+        raise CandidateValidationError("candidate changed during sealing")
     changed = tuple(
         path.as_posix()
         for path in workspace.allowed_paths
@@ -61,6 +63,11 @@ def _candidate_files(root: Path) -> tuple[str, ...]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     )
+
+
+def _validate_candidate_paths(paths: tuple[str, ...], allowed_paths: set[str]) -> None:
+    if set(paths) - allowed_paths:
+        raise CandidateValidationError("candidate changed a protected path")
 
 
 def _snapshot_candidate_files(
