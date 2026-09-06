@@ -9,8 +9,10 @@ from pydantic import SecretStr
 from test_runtime_request import request as runtime_request
 
 from syndicate.controllers.handler_inputs import RuntimeInput
+from syndicate.controllers.live_handlers import _run_check
 from syndicate.controllers.preflight import dispatch
 from syndicate.models.budget import BudgetCap
+from syndicate.models.candidate import CandidateWorkspace, IncumbentSnapshot
 from syndicate.models.commands import RunTrialCommand
 from syndicate.models.envelope import ArtifactKind, ArtifactRef, CommandStatus
 from syndicate.repositories.artifact_store import ArtifactStore
@@ -75,3 +77,30 @@ def test_default_trial_handler_returns_typed_blocked_without_harbor(
 
     assert exit_code == 0
     assert receipt.status is CommandStatus.BLOCKED
+
+
+def test_candidate_check_uses_fixed_argv_and_candidate_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    workspace = CandidateWorkspace(
+        root=tmp_path,
+        snapshot_root=tmp_path,
+        candidate_root=candidate,
+        incumbent=IncumbentSnapshot(root=tmp_path, content_hash="a" * 64),
+        candidate_parent_hash="a" * 64,
+        allowed_paths=(),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def run(arguments: tuple[str, ...], **_: object) -> SimpleNamespace:
+        calls.append(arguments)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("syndicate.controllers.live_handlers.subprocess.run", run)
+
+    assert _run_check(workspace, "uv run pytest test_candidate.py")
+    assert calls == [("uv", "run", "pytest", "test_candidate.py")]
+    with pytest.raises(ValueError, match="explicit"):
+        _run_check(workspace, "sh -c unsafe")
