@@ -13,8 +13,8 @@ policy; this module does not claim live pricing or paid endpoint verification.
 Compatibility: single-attempt NexAU calls, explicit zero-retry OpenAI client,
 non-streaming Responses API, declared limits, and sequential shell calls on one
 asyncio loop. NexAU reserves its final iteration as a stop boundary; a typed
-`RuntimeStopped` carries its enum reason. Native traces, tool receipts and typed
-runtime exit data are retained under `/logs/agent` for the observability adapter.
+`RuntimeStopped` carries its enum reason. Neatlogs owns trajectory payloads; this
+runtime writes no local trace, tool receipt, or final-response payload artifact.
 
 P08c launches the entry point using `python -I -m syndicate.nexau_runtime` and
 stops the entire trial UID before Harbor verification. That outer isolation is
