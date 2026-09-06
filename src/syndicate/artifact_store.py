@@ -19,6 +19,10 @@ class ArtifactStore:
             raise ValueError("Controller root must be absolute and nonsymlink")
         self._root = root
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     def path_for(self, reference: ArtifactRef) -> Path:
         return (
             self._root

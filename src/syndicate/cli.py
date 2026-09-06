@@ -4,20 +4,25 @@ import hashlib
 import sys
 from pathlib import Path
 
+from syndicate.artifact_store import ArtifactStore
 from syndicate.cli_envelope import (
     ArtifactKind,
     ArtifactRef,
+    CollectReportsCommand,
     Command,
     CommandError,
     CommandReceipt,
     CommandRequest,
     CommandStatus,
+    CompareHarnessCommand,
     ErrorReason,
     PreflightCommand,
+    SelectHarnessCommand,
     export_schemas,
     parse_command,
 )
 from syndicate.preflight import AdmissionError, ControllerConfig, preflight
+from syndicate.pure_handlers import collect, compare, select
 
 
 def contained(path: Path, root: Path) -> Path:
@@ -90,6 +95,22 @@ def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     )
 
 
+def execute_pure(command: CommandRequest, root: Path) -> CommandReceipt:
+    controller = ControllerConfig.model_validate_json(
+        (root / "controller.json").read_bytes()
+    )
+    if command.content_hash not in controller.approved_request_hashes:
+        raise ValueError("Controller did not approve this command request")
+    store = ArtifactStore(root)
+    if isinstance(command, CollectReportsCommand):
+        return collect(command, store)
+    if isinstance(command, CompareHarnessCommand):
+        return compare(command, store)
+    if isinstance(command, SelectHarnessCommand):
+        return select(command, store)
+    raise ValueError("Command handler is not installed")
+
+
 def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     root = Path.cwd().resolve() / ".syndicate"
     try:
@@ -97,9 +118,9 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     except (OSError, ValueError):
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, None), 2
     try:
-        if not isinstance(command, PreflightCommand):
-            raise ValueError("Command handler is not installed")
-        return execute(command, run, root), 0
+        if isinstance(command, PreflightCommand):
+            return execute(command, run, root), 0
+        return execute_pure(command, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2
     except ValueError:
