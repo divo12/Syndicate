@@ -1,8 +1,10 @@
-"""Pinned-cwd controller transport: execute --request ABSOLUTE_REQUEST_JSON."""
+"""Operator preflight command and internal controller request transport."""
 
 import hashlib
 import sys
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from syndicate.cli_envelope import (
     ArtifactRef,
@@ -12,7 +14,13 @@ from syndicate.cli_envelope import (
     ErrorReason,
     PreflightCommand,
 )
-from syndicate.preflight import AdmissionError, ControllerConfig, preflight
+from syndicate.preflight import (
+    AdmissionError,
+    ControllerConfig,
+    InfrastructureError,
+    preflight,
+    prepare_preflight,
+)
 
 
 def contained(path: Path, root: Path) -> Path:
@@ -41,13 +49,29 @@ def failure(
         operation_id=command.operation_id if command else None,
         attempt_id=command.attempt_id if command else None,
         status=status,
-        error=CommandError(reason=reason, message="Controller input validation failed"),
+        error=CommandError(
+            reason=reason,
+            message={
+                ErrorReason.INVALID_REQUEST: "Request validation or admission failed",
+                ErrorReason.INVALID_CONFIGURATION: "Configuration validation failed",
+                ErrorReason.INFRASTRUCTURE: "Runtime infrastructure failure",
+            }[reason],
+        ),
     )
 
 
 def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     anchor = contained(root / "controller.json", root)
-    controller = ControllerConfig.model_validate_json(anchor.read_bytes())
+    try:
+        controller = ControllerConfig.model_validate_json(anchor.read_bytes())
+    except ValidationError:
+        raise InfrastructureError("Invalid controller declaration") from None
+    return execute_preflight(command, run, controller)
+
+
+def execute_preflight(
+    command: PreflightCommand, run: Path, controller: ControllerConfig
+) -> CommandReceipt:
     result = preflight(command, controller)
     payload = result.model_dump_json().encode()
     with (run / "preflight.json").open("xb") as artifact:
@@ -65,8 +89,34 @@ def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     )
 
 
+def operator_preflight(config_file: Path, root: Path) -> tuple[CommandReceipt, int]:
+    """Provision one run without changing the shared controller trust anchor."""
+    command = None
+    try:
+        command, controller = prepare_preflight(config_file)
+        run = contained(
+            root / "runs" / str(command.operation_id) / str(command.attempt_id), root
+        )
+        run.mkdir(parents=True, exist_ok=False)
+        for name, model in (("request", command), ("controller", controller)):
+            with (run / f"{name}.json").open("x", encoding="utf-8") as output:
+                output.write(model.model_dump_json())
+        return execute_preflight(command, run, controller), 0
+    except (OSError, InfrastructureError):
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
+    except ValueError:
+        return failure(
+            CommandStatus.BLOCKED, ErrorReason.INVALID_CONFIGURATION, command
+        ), 2
+
+
 def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
-    root = Path.cwd().resolve() / ".syndicate"
+    try:
+        root = Path.cwd().resolve() / ".syndicate"
+    except OSError:
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, None), 1
+    if len(arguments) == 3 and arguments[:2] == ["preflight", "--config"]:
+        return operator_preflight(Path(arguments[2]), root)
     try:
         command, run = read_request(arguments, root)
     except (OSError, ValueError):
@@ -75,15 +125,19 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
         return execute(command, run, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2
+    except (OSError, InfrastructureError):
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
     except ValueError:
         return failure(
             CommandStatus.BLOCKED, ErrorReason.INVALID_CONFIGURATION, command
         ), 0
-    except OSError:
-        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
 
 
 def main(arguments: list[str]) -> int:
+    if arguments == ["--help"]:
+        print("Usage: python -m syndicate.cli preflight --config CAMPAIGN_JSON")
+        print("Internal transport: execute --request ABSOLUTE_REQUEST_JSON")
+        return 0
     receipt, exit_code = dispatch(arguments)
     if receipt.error:
         print(receipt.error.reason.value, file=sys.stderr)
