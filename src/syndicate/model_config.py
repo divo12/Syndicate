@@ -100,6 +100,16 @@ _ENV_NAMES = frozenset(
 )
 
 
+def _parse_env_value(raw: str) -> str:
+    """Decode one literal shell value, rejecting interpolation and empty values."""
+    if "$" in raw or "`" in raw:
+        raise ModelConfigError("Invalid environment assignment")
+    tokens = shlex.split(raw, comments=True, posix=True)
+    if len(tokens) != 1 or not tokens[0].strip():
+        raise ModelConfigError("Missing or malformed environment value")
+    return tokens[0]
+
+
 def _read_env(path: Path) -> dict[str, str]:
     """Parse only selected assignments; never execute, interpolate or mutate env."""
     values: dict[str, str] = {}
@@ -108,12 +118,9 @@ def _read_env(path: Path) -> dict[str, str]:
         name = name.strip()
         if name not in _ENV_NAMES:
             continue
-        if not separator or name in values or "$" in raw or "`" in raw:
+        if not separator or name in values:
             raise ModelConfigError("Invalid environment assignment")
-        tokens = shlex.split(raw, comments=True, posix=True)
-        if len(tokens) != 1 or not tokens[0].strip():
-            raise ModelConfigError("Missing or malformed environment value")
-        values[name] = tokens[0]
+        values[name] = _parse_env_value(raw)
     if values.keys() != _ENV_NAMES:
         raise ModelConfigError("Missing required Azure configuration")
     return values

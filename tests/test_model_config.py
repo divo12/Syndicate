@@ -56,7 +56,9 @@ def test_reject_unverified_deployment(tmp_path: Path, deployment: str) -> None:
         load_model_config(env_file(tmp_path, deployment=deployment))
 
 
-@pytest.mark.parametrize("key", ["", " ", "${HOST_SECRET}"])
+@pytest.mark.parametrize(
+    "key", ["", " ", "${HOST_SECRET}", "`command`", 'unterminated"quote', 'one" two']
+)
 def test_reject_empty_or_interpolated_key(tmp_path: Path, key: str) -> None:
     with pytest.raises(ModelConfigError):
         load_model_config(env_file(tmp_path, key=key))
