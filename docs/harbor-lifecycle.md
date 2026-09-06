@@ -1,24 +1,24 @@
 # Harbor lifecycle
 
-P08c runs NexAU only as UID `10001`, probes that `/tests` and `/solution` are
-absent before dispatch, then kills and verifies that UID before verifier authority.
-The PR11 pipe backend holds shell output only in bounded RAM. NexAU writes no local
-trace, shell payload, or final-response file; P10 owns the Neatlogs SDK export.
+`SyndicateNexAUAgent` uses the sandbox already owned by Harbor's E2B environment.
+NexAU, model credentials, approved request, and seed harness stay on the controller.
+Only shell commands cross into E2B, under dedicated UID/GID `10001`.
 
-```mermaid
-flowchart LR
-  A[UID 10001 SyndicateNexAUAgent.run] --> C[whole-UID cleanup]
-  C --> R[return to Harbor]
-  R --> V[Harbor framework original verifier]
-```
+The task template must provision that user, the approved writable workspace, and
+`bash`, `setpriv`, `setsid`, `timeout`, `pkill`, and `pgrep`. Setup checks these
+prerequisites; it does not change ownership or permissions on task paths.
+Controller callers can supply `harness_dir` and `framework_lock`; defaults refer
+to this checkout's seed harness and `requirements.lock`.
 
-Depends on P08b and P07b. P09 receives a separate cleanup-gated library API.
+Before dispatch, the lifecycle checks that hidden verifier paths are absent.
+`run_on_controller()` owns the E2B shell and always attempts whole-UID cleanup.
+A cleanup receipt is returned only after runtime success and verified process
+termination. Execution, inspection, or cleanup failures propagate to Harbor,
+without issuing a successful cleanup receipt. Harbor retains VM ownership and
+sole authority to invoke its original verifier after successful handoff.
 
-## Harbor infrastructure receipt
+The adapter isolates access to Harbor 0.22.0's private `_sandbox` field in one
+checked accessor because that pinned release provides no public accessor.
 
-Pinned `task-a-1` runs established Harbor's framework ordering only: no-op
-`task-a-1__5ZMgbAY` rewarded `0` (agent end `07:07:51.787787Z`, verifier start
-`07:07:52.005673Z`); oracle-equivalent `task-a-1__kcWP5cF` rewarded `1` (agent
-end `07:09:44.944566Z`, verifier start `07:09:45.142066Z`). Both used Harbor's
-original verifier without exceptions or a model. The oracle solution upload is
-infrastructure evidence, never SyndicateNexAUAgent or Agent A performance.
+Neatlogs instrumentation remains on the controller. This adapter uploads no
+credentials, runtime files, or harness payloads into the benchmark environment.

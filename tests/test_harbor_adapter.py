@@ -1,64 +1,98 @@
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, call, create_autospec
+from unittest.mock import AsyncMock, create_autospec, patch
 
+import pytest
+from e2b import AsyncSandbox
+from e2b.sandbox.commands.command_handle import CommandResult
 from harbor.agents.factory import AgentFactory
-from harbor.environments.base import BaseEnvironment, ExecResult
+from harbor.environments.base import BaseEnvironment
+from harbor.environments.e2b import E2BEnvironment
+from harbor.models.agent.context import AgentContext
 from pydantic import SecretStr
 from test_runtime_request import request
 
-from syndicate.harbor_adapter import KEY_PATH, REQUEST_PATH, SyndicateNexAUAgent
+from syndicate.harbor_adapter import SyndicateNexAUAgent
+from syndicate.harbor_agent import CleanupReceipt
 
 
-def test_native_import_path_runs_only_after_settled_agent_cleanup(
-    tmp_path: Path,
-) -> None:
-    environment = create_autospec(BaseEnvironment, instance=True)
-    environment.exec = AsyncMock(
-        side_effect=(
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=0),
-            ExecResult(return_code=1),
-            ExecResult(return_code=1),
-            ExecResult(return_code=1),
-        )
+def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
+    environment = create_autospec(E2BEnvironment, instance=True)
+    sandbox = create_autospec(AsyncSandbox, instance=True)
+    environment._sandbox = sandbox
+    sandbox.commands.run = AsyncMock(
+        return_value=CommandResult(exit_code=0, stdout="", stderr="", error=None)
     )
-    environment.upload_file = AsyncMock()
-    environment.upload_dir = AsyncMock()
     agent = AgentFactory.create_agent_from_import_path(
         SyndicateNexAUAgent.import_path(),
         logs_dir=tmp_path,
         request=request(),
         api_key=SecretStr("fixture"),
+        harness_dir=tmp_path / "harness",
+        framework_lock=tmp_path / "lock",
     )
     assert isinstance(agent, SyndicateNexAUAgent)
+    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+        lifecycle.return_value.run = AsyncMock(
+            return_value=CleanupReceipt(uid=10001, complete=True)
+        )
 
-    async def exercise() -> None:
-        await agent.setup(environment)
-        await agent.run(agent.request.instruction, environment, create_autospec(object))
+        async def exercise() -> None:
+            await agent.setup(environment)
+            await agent.run(agent.request.instruction, environment, AgentContext())
 
-    asyncio.run(exercise())
-    assert agent.cleanup_receipt is not None and agent.cleanup_receipt.complete
-    assert environment.upload_dir.await_args.args[1] == "/run/syndicate/harness"
-    assert environment.upload_file.await_args_list[0].args[1] == REQUEST_PATH
-    assert environment.upload_file.await_args_list[1].args[1] == KEY_PATH
-    assert environment.exec.await_args_list[:2] == [
-        call(command="mkdir -p /run/syndicate", user="root"),
-        call(
-            command=(
-                "chown -R 10001:10001 /run/syndicate && "
-                "chmod 600 /run/syndicate/api-key"
-            ),
-            user="root",
-        ),
-    ]
-    assert environment.exec.await_args_list[-5:] == [
-        call(command="test ! -e /tests && test ! -e /solution", user="10001"),
-        call(command="python -I -m syndicate.nexau_runtime", user="10001"),
-        call(command="pkill -KILL -u 10001 || true", user="root"),
-        call(command="pgrep -u 10001", user="root"),
-        call(command="pgrep -u 10001", user="root"),
-    ]
+        asyncio.run(exercise())
+        lifecycle.assert_called_once_with(
+            sandbox,
+            harness_dir=tmp_path / "harness",
+            framework_lock=tmp_path / "lock",
+        )
+        lifecycle.return_value.run.assert_awaited_once_with(
+            agent.request, agent.api_key
+        )
+    assert agent.cleanup_receipt == CleanupReceipt(uid=10001, complete=True)
+    environment.upload_dir.assert_not_called()
+    environment.upload_file.assert_not_called()
+    environment.exec.assert_not_called()
+    command = sandbox.commands.run.call_args.args[0]
+    assert "10001" in command and "/app" in command
+    assert "chown" not in command and "chmod" not in command
+
+
+@pytest.mark.parametrize("failure", ["instruction", "probe", "runtime"])
+def test_failed_admission_or_execution_has_no_receipt(
+    tmp_path: Path, failure: str
+) -> None:
+    environment = create_autospec(E2BEnvironment, instance=True)
+    environment._sandbox = create_autospec(AsyncSandbox, instance=True)
+    environment._sandbox.commands.run = AsyncMock(
+        return_value=CommandResult(exit_code=1, stdout="", stderr="", error=None)
+    )
+    agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
+    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+        lifecycle.return_value.run = AsyncMock(side_effect=RuntimeError("failed"))
+
+        async def exercise() -> None:
+            if failure == "probe":
+                await agent.setup(environment)
+            else:
+                await agent.run(
+                    "wrong" if failure == "instruction" else agent.request.instruction,
+                    environment,
+                    AgentContext(),
+                )
+
+        with pytest.raises((ValueError, RuntimeError)):
+            asyncio.run(exercise())
+    assert agent.cleanup_receipt is None
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_requires_started_e2b_environment(tmp_path: Path, started: bool) -> None:
+    environment = create_autospec(
+        BaseEnvironment if started else E2BEnvironment, instance=True
+    )
+    environment._sandbox = None
+    agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
+    with pytest.raises((ValueError, RuntimeError)):
+        asyncio.run(agent.setup(environment))
