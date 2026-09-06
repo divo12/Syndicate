@@ -11,6 +11,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck:trigger && bun run test:trigger
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.5"
