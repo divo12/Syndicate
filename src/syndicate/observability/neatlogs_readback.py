@@ -6,14 +6,7 @@ from typing import Literal, NewType
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from pydantic import (
-    AliasChoices,
-    BaseModel,
-    ConfigDict,
-    Field,
-    SecretStr,
-    field_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from .neatlogs_capture import RunLink
 
@@ -73,24 +66,6 @@ class _McpEnvelope(BaseModel):
     result: _McpResult
 
 
-class _TraceSearchItem(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True, validate_by_name=True)
-    trace_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        validation_alias=AliasChoices("trace_id", "id"),
-    )
-
-
-class _TraceSearch(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True, validate_by_name=True)
-    traces: tuple[_TraceSearchItem, ...] = Field(
-        default=(),
-        validation_alias=AliasChoices("traces", "results"),
-    )
-
-
 class _TraceNode(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
     span_id: str = Field(min_length=1, max_length=200)
@@ -128,16 +103,6 @@ class NeatlogsReadbackReader:
         raise ValueError("Expected span coverage is required")
 
     def fetch(self, expected: ExpectedTrace) -> NeatlogsReadbackReceipt:
-        search = _TraceSearch.model_validate_json(
-            self._tool(
-                "search_traces", json.dumps({"query": str(expected.link.run_id)})
-            )
-        )
-        matching_traces = tuple(
-            item.trace_id for item in search.traces if item.trace_id is not None
-        ).count(expected.trace_ref)
-        if matching_traces != 1:
-            return self._receipt(expected, False, False, ())
         payload = self._tool(
             "get_trace_context", json.dumps({"trace_id": expected.trace_ref})
         )

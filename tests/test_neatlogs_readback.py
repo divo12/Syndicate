@@ -101,19 +101,14 @@ def test_mcp_event_stream_envelope_is_supported() -> None:
     )
 
 
-def test_provider_result_aliases_remain_fail_closed_when_missing() -> None:
+def test_direct_context_does_not_depend_on_search_index() -> None:
     value = expected()
-    receipt = Reader('{"results":[]}', context(value.link)).fetch(value)
-    assert not receipt.complete
+    direct = Reader('{"traces":[]}', context(value.link))
+    assert direct.fetch(value).complete
 
 
-def test_duplicate_trace_or_span_data_is_incomplete() -> None:
+def test_duplicate_span_data_is_incomplete() -> None:
     value = expected()
-    duplicate_trace = Reader(
-        '{"traces":[{"trace_id":"trace"},{"trace_id":"trace"}]}',
-        context(value.link),
-    )
-    assert not duplicate_trace.fetch(value).complete
     duplicate_span = (
         context(value.link)
         .replace(
