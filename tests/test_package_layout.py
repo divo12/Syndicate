@@ -11,12 +11,14 @@ def test_controller_entry_stays_as_cli_module() -> None:
 
 def test_model_layer_exports_contracts() -> None:
     envelope = import_module("syndicate.models.envelope")
+    jobs = import_module("syndicate.models.jobs")
     budget = import_module("syndicate.models.budget")
     model_config = import_module("syndicate.models.model_config")
     runtime = import_module("syndicate.models.runtime")
     baseline = import_module("syndicate.models.baseline")
     shell = import_module("syndicate.models.shell")
     assert envelope.CommandReceipt is not None
+    assert jobs.JobSubmission is not None
     assert budget.BudgetCap is not None
     assert model_config.ModelSettings is not None
     assert runtime.RuntimeRequest is not None
@@ -36,10 +38,12 @@ def test_service_layer_exports_use_cases() -> None:
 
 
 def test_repository_and_adapter_layers() -> None:
+    jobs = import_module("syndicate.repositories.jobs")
     manifest = import_module("syndicate.repositories.benchmark_manifest")
     shell = import_module("syndicate.adapters.e2b_shell")
     harbor = import_module("syndicate.adapters.harbor_agent")
     adapter = import_module("syndicate.adapters.harbor_adapter")
+    assert jobs.MemoryJobStore is not None
     assert manifest.BenchmarkManifest is not None
     assert shell.E2BShell is not None
     assert harbor.HarborAgent is not None

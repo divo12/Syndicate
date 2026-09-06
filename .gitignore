@@ -15,3 +15,5 @@ AGENTS.md
 
 .syndicate/
 .trigger
+.trigger-build/
+node_modules/
