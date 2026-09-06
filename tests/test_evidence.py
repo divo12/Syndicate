@@ -15,9 +15,9 @@ from syndicate.evidence_contracts import (
 )
 from syndicate.observability.neatlogs_capture import RunLink
 from syndicate.observability.neatlogs_readback import (
+    ExpectedTrace,
     NeatlogsReadbackReader,
     NeatlogsReadbackReceipt,
-    NeatlogsTraceRef,
     ReadbackSpan,
 )
 
@@ -60,9 +60,7 @@ class Remote(NeatlogsReadbackReader):
         self.response = response
         self.unavailable = False
 
-    def read(
-        self, link: RunLink, trace_ref: NeatlogsTraceRef
-    ) -> NeatlogsReadbackReceipt:
+    def fetch(self, expected: ExpectedTrace) -> NeatlogsReadbackReceipt:
         if self.unavailable:
             raise ValueError("Remote unavailable")
         return self.response
@@ -99,6 +97,7 @@ def setup_reader(count: int = 1) -> tuple[Remote, EvidenceReader, SpanCitation]:
             EvidenceGrant(
                 link=link,
                 trace_ref=receipt.trace_ref,
+                expected_span_refs=tuple(span.span_id for span in receipt.spans),
                 semantic_digest=receipt.semantic_digest,
             ),
         ),
