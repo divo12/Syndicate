@@ -1,9 +1,15 @@
+from pathlib import Path
+
 from syndicate.models.jobs import JobStatus, JobSubmission, StopReason
-from syndicate.repositories.jobs import MemoryJobStore
+from syndicate.repositories.jobs import SqliteJobStore
 
 
-def test_create_lists_and_gets_a_queued_job() -> None:
-    store = MemoryJobStore()
+def _store(tmp_path: Path) -> SqliteJobStore:
+    return SqliteJobStore(tmp_path / "jobs.sqlite")
+
+
+def test_create_lists_and_gets_a_queued_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     job = store.create(JobSubmission(task_ids=("regex-log", "extract-elf")))
     assert job.status is JobStatus.QUEUED
     assert job.trigger_run_id is None
@@ -13,8 +19,8 @@ def test_create_lists_and_gets_a_queued_job() -> None:
     assert store.list_jobs(JobStatus.RUNNING) == ()
 
 
-def test_cancel_is_allowed_from_queued_only() -> None:
-    store = MemoryJobStore()
+def test_cancel_is_allowed_from_queued_only(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     queued = store.create(JobSubmission(task_ids=("regex-log",)))
     cancelled = store.cancel(queued.id)
     assert cancelled is not None
@@ -22,8 +28,8 @@ def test_cancel_is_allowed_from_queued_only() -> None:
     assert store.cancel(queued.id) is None
 
 
-def test_finish_does_not_overwrite_a_cancelled_job() -> None:
-    store = MemoryJobStore()
+def test_finish_does_not_overwrite_a_cancelled_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     job = store.create(JobSubmission(task_ids=("regex-log",)))
     claimed = store.claim()
     assert claimed is not None

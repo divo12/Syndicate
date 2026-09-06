@@ -1,14 +1,15 @@
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from syndicate.controllers.http import create_app
 from syndicate.models.jobs import JobStatus, JobSubmission
-from syndicate.repositories.jobs import MemoryJobStore
+from syndicate.repositories.jobs import SqliteJobStore
 
 
-def _client() -> TestClient:
-    return TestClient(create_app(MemoryJobStore()))
+def _client(tmp_path: Path) -> TestClient:
+    return TestClient(create_app(SqliteJobStore(tmp_path / "jobs.sqlite")))
 
 
 def _submit(client: TestClient) -> str:
@@ -25,8 +26,8 @@ def _submit(client: TestClient) -> str:
     return job_id
 
 
-def test_submit_stays_queued_until_worker_runs() -> None:
-    client = _client()
+def test_submit_stays_queued_until_worker_runs(tmp_path: Path) -> None:
+    client = _client(tmp_path)
     assert client.get("/health").json() == {"status": "ok"}
     job_id = _submit(client)
     body = client.get(f"/jobs/{job_id}").json()
@@ -35,8 +36,8 @@ def test_submit_stays_queued_until_worker_runs() -> None:
     assert body["trigger_run_id"] is None
 
 
-def test_list_and_poll_keep_job_queued() -> None:
-    client = _client()
+def test_list_and_poll_keep_job_queued(tmp_path: Path) -> None:
+    client = _client(tmp_path)
     job_id = _submit(client)
     listed = client.get("/jobs")
     assert listed.status_code == 200
@@ -46,8 +47,8 @@ def test_list_and_poll_keep_job_queued() -> None:
     assert polled.json()["status"] == "queued"
 
 
-def test_cancel_then_rejects_second_cancel() -> None:
-    client = _client()
+def test_cancel_then_rejects_second_cancel(tmp_path: Path) -> None:
+    client = _client(tmp_path)
     job_id = _submit(client)
     cancelled = client.post(f"/jobs/{job_id}/cancel")
     assert cancelled.status_code == 200
@@ -55,15 +56,15 @@ def test_cancel_then_rejects_second_cancel() -> None:
     assert client.post(f"/jobs/{job_id}/cancel").status_code == 409
 
 
-def test_unknown_job_is_not_found() -> None:
-    client = _client()
+def test_unknown_job_is_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
     missing = str(uuid4())
     assert client.get(f"/jobs/{missing}").status_code == 404
     assert client.post(f"/jobs/{missing}/cancel").status_code == 404
 
 
-def test_invalid_submission_is_rejected() -> None:
-    client = _client()
+def test_invalid_submission_is_rejected(tmp_path: Path) -> None:
+    client = _client(tmp_path)
     assert (
         client.post("/jobs", json={"task_ids": ["regex-log", "regex-log"]}).status_code
         == 422

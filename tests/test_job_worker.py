@@ -1,10 +1,16 @@
+from pathlib import Path
+
 import pytest
 
 from syndicate.adapters.trigger_jobs import NullTriggerLoop, trigger_from_env
 from syndicate.models.jobs import Job, JobStatus, JobSubmission, StopReason
-from syndicate.repositories.jobs import MemoryJobStore
+from syndicate.repositories.jobs import SqliteJobStore
 from syndicate.services.executors import SimulatedExecutor, score_of
 from syndicate.services.job_worker import JobWorker
+
+
+def _store(tmp_path: Path) -> SqliteJobStore:
+    return SqliteJobStore(tmp_path / "jobs.sqlite")
 
 
 class RecordingTrigger:
@@ -22,8 +28,10 @@ def test_simulated_executor_fails_only_the_last_baseline_task() -> None:
     assert score_of(SimulatedExecutor().run(("a", "b", "c"), 1)) == 1
 
 
-def test_worker_dispatches_trigger_and_persists_live_iterations() -> None:
-    store = MemoryJobStore()
+def test_worker_dispatches_trigger_and_persists_live_iterations(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
     job = store.create(
         JobSubmission(
             task_ids=("regex-log", "extract-elf"), max_iterations=3, patience=2
@@ -44,11 +52,12 @@ def test_worker_dispatches_trigger_and_persists_live_iterations() -> None:
 
 
 def test_worker_runs_without_trigger_credentials(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("TRIGGER_SECRET_KEY", raising=False)
     monkeypatch.delenv("TRIGGER_API_URL", raising=False)
-    store = MemoryJobStore()
+    store = _store(tmp_path)
     store.create(JobSubmission(task_ids=("regex-log",)))
     finished = JobWorker(store, trigger_from_env(None, None)).process_one()
     assert finished is not None
@@ -56,8 +65,8 @@ def test_worker_runs_without_trigger_credentials(
     assert finished.status is JobStatus.COMPLETED
 
 
-def test_trigger_dispatch_failure_marks_job_failed() -> None:
-    store = MemoryJobStore()
+def test_trigger_dispatch_failure_marks_job_failed(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     store.create(JobSubmission(task_ids=("regex-log",)))
 
     class Boom:
@@ -72,8 +81,8 @@ def test_trigger_dispatch_failure_marks_job_failed() -> None:
     assert "trigger down" in finished.error
 
 
-def test_loop_exception_marks_job_failed() -> None:
-    store = MemoryJobStore()
+def test_loop_exception_marks_job_failed(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2, patience=2))
 
     def boom(generation: int) -> int:

@@ -5,9 +5,13 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.observability.neatlogs_capture import CaptureReceipt, RunLink
+from syndicate.observability.neatlogs_capture import (
+    CaptureReceipt,
+    CaptureState,
+    RunLink,
+)
 
 
 class EvidenceModel(BaseModel):
@@ -41,6 +45,17 @@ class EvidenceStatus(StrEnum):
 class EvidenceGrant(EvidenceModel):
     receipt: CaptureReceipt
     semantic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def require_sealed_receipt(self) -> "EvidenceGrant":
+        receipt = self.receipt
+        if (
+            receipt.state is not CaptureState.FLUSHED_UNVERIFIED
+            or receipt.trace_ref is None
+            or receipt.binding_digest is None
+        ):
+            raise ValueError("Evidence grant requires a sealed flushed receipt")
+        return self
 
     @property
     def link(self) -> RunLink:

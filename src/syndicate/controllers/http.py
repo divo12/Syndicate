@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from syndicate.adapters.trigger_jobs import trigger_from_env
 from syndicate.models.jobs import Job, JobStatus, JobSubmission
-from syndicate.repositories.jobs import JobStore, MemoryJobStore, PostgresJobStore
+from syndicate.repositories.jobs import JobStore, PostgresJobStore, SqliteJobStore
 from syndicate.services.job_worker import JobWorker
 
 
@@ -79,8 +79,15 @@ def create_app(store: JobStore, worker: JobWorker | None = None) -> FastAPI:
 
 def app_from_env() -> FastAPI:
     url = os.environ.get("DATABASE_URL")
+    if url is None or url.strip() == "":
+        raise RuntimeError("DATABASE_URL is required")
     store: JobStore
-    store = MemoryJobStore() if url is None else PostgresJobStore(url)
+    if url.startswith("postgres"):
+        store = PostgresJobStore(url)
+    elif url.startswith("sqlite:"):
+        store = SqliteJobStore(Path(url.removeprefix("sqlite:")))
+    else:
+        raise RuntimeError("DATABASE_URL must be postgres or sqlite")
     worker = JobWorker(
         store,
         trigger_from_env(
@@ -91,4 +98,4 @@ def app_from_env() -> FastAPI:
     return create_app(store, worker)
 
 
-app = app_from_env()
+app = app_from_env() if os.environ.get("DATABASE_URL") else None

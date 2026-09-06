@@ -1,6 +1,6 @@
 # Operator: submit tasks and run the learning loop
 
-Single-tenant job API. Postgres stores jobs; Trigger.dev runs the cloud loop when `TRIGGER_SECRET_KEY` is set. Without that key the API worker still runs the simulated loop locally so `make up` works.
+Single-tenant job API. `DATABASE_URL` is required (Postgres in Compose, SQLite for tests). Trigger.dev runs the cloud loop when `TRIGGER_SECRET_KEY` is set. Without that key the API worker still runs the simulated loop locally so `make up` works.
 
 ## Start
 

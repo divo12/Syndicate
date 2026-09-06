@@ -10,7 +10,7 @@ from syndicate.models.envelope import ArtifactKind, ArtifactRef, CommandStatus
 from syndicate.models.jobs import ExecutorKind, JobSubmission, TaskResult
 from syndicate.models.judging import TaskReport
 from syndicate.repositories.artifact_store import ArtifactStore
-from syndicate.repositories.jobs import MemoryJobStore
+from syndicate.repositories.jobs import SqliteJobStore
 from syndicate.services.benchmark import RunOutcome, VerifierReason, VerifierReceipt
 from syndicate.services.executors import HarborExecutor, task_result_from_verifier
 from syndicate.services.job_worker import JobWorker
@@ -206,8 +206,8 @@ def test_trial_cli_prints_one_task_result(
     assert other.outcome.value == "passed"
 
 
-def test_harbor_job_is_marked_failed_without_keys() -> None:
-    store = MemoryJobStore()
+def test_harbor_job_is_marked_failed_without_keys(tmp_path: Path) -> None:
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
     store.create(JobSubmission(task_ids=("regex-log",), executor=ExecutorKind.HARBOR))
 
     class Idle:
