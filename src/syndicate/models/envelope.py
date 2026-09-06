@@ -79,7 +79,7 @@ class ArtifactKind(StrEnum):
     RUNTIME_REQUEST = "runtime_request"
     JUDGE_INPUT = "judge_input"
     PROPOSAL_INPUT = "proposal_input"
-    CANDIDATE_RECEIPT = "candidate_receipt"
+    CANDIDATE = "candidate"
 
 
 class ArtifactRef(WireModel):
