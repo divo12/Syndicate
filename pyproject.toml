@@ -8,7 +8,10 @@ version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "pydantic==2.11.7",
-  "harbor==0.22.0",
+  "harbor[e2b]==0.22.0",
+  "e2b==2.26.0",
+  "openai==2.54.0",
+  "neatlogs",
   "nexau @ git+https://github.com/nex-agi/NexAU.git@35ee1861546db3cb280a6e17e38a74060d7c96c3",
 ]
 
@@ -49,6 +52,6 @@ select = ["E", "F", "I", "UP", "B", "ANN"]
 build = ["hatchling==1.27.0", "editables==0.5"]
 
 [[tool.mypy.overrides]]
-module = ["harbor.*", "nexau.*"]
+module = ["harbor.*", "nexau.*", "e2b.*"]
 follow_untyped_imports = true
 follow_imports = "silent"
