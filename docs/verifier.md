@@ -11,4 +11,9 @@ flowchart LR
   H --> R[typed nonpayload receipt]
 ```
 
-Depends on P08c / #21. This 136-LOC slice is below the 500-LOC limit.
+The serialized cleanup object is the sole cleanup proof. `cleanup_complete` is
+a derived, read-only convenience property and is not serialized. Verified
+outcomes require complete cleanup and matching verifier reasons and rewards;
+unverified or cancelled receipts cannot claim a reward or a passed/failed reason.
+
+Depends on P08c / #21.

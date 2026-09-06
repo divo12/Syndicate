@@ -42,14 +42,22 @@ class VerifierReceipt(BaseModel):
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
-        expected = {
-            RunOutcome.PASS: (VerifierReason.PASSED, 1.0),
-            RunOutcome.FAIL: (VerifierReason.FAILED, 0.0),
-        }.get(self.outcome)
-        if expected is not None and (self.reason, self.reward) != expected:
+        match self.outcome:
+            case RunOutcome.PASS:
+                expected = (VerifierReason.PASSED, 1.0)
+            case RunOutcome.FAIL:
+                expected = (VerifierReason.FAILED, 0.0)
+            case _:
+                if self.reward is not None or self.reason in (
+                    VerifierReason.PASSED,
+                    VerifierReason.FAILED,
+                ):
+                    raise ValueError(
+                        "Unverified receipt cannot claim a reward or result"
+                    )
+                return self
+        if (self.reason, self.reward) != expected:
             raise ValueError("Verifier outcome, reason, and reward must agree")
-        if self.outcome is RunOutcome.UNVERIFIED and self.reward is not None:
-            raise ValueError("Unverified verifier receipt cannot carry a reward")
         return self
 
 
@@ -62,17 +70,18 @@ class RunReceipt(BaseModel):
     attempt_id: UUID
     run_id: UUID
     task_id: str = Field(min_length=1)
-    cleanup_complete: bool
     cleanup: CleanupReceipt
     outcome: RunOutcome
     verifier: VerifierReceipt
+
+    @property
+    def cleanup_complete(self) -> bool:
+        return self.cleanup.complete
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
         if self.verifier.outcome is not self.outcome:
             raise ValueError("Verifier outcome must match run outcome")
-        if self.cleanup_complete is not self.cleanup.complete:
-            raise ValueError("Cleanup flag must match cleanup proof")
         if (
             self.outcome in (RunOutcome.PASS, RunOutcome.FAIL)
             and not self.cleanup_complete
