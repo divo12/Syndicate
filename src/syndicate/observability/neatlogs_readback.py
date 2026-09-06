@@ -6,7 +6,14 @@ from typing import Literal, NewType
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+)
 
 from .neatlogs_capture import RunLink
 
@@ -29,6 +36,13 @@ class ExpectedTrace(BaseModel):
     link: RunLink
     trace_ref: str = Field(min_length=1, max_length=200)
     expected_span_refs: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("expected_span_refs")
+    @classmethod
+    def unique_span_refs(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("Expected span IDs must be unique")
+        return values
 
 
 class NeatlogsReadbackReceipt(BaseModel):
@@ -119,9 +133,10 @@ class NeatlogsReadbackReader:
                 "search_traces", json.dumps({"query": str(expected.link.run_id)})
             )
         )
-        if expected.trace_ref not in tuple(
+        matching_traces = tuple(
             item.trace_id for item in search.traces if item.trace_id is not None
-        ):
+        ).count(expected.trace_ref)
+        if matching_traces != 1:
             return self._receipt(expected, False, False, ())
         payload = self._tool(
             "get_trace_context", json.dumps({"trace_id": expected.trace_ref})
@@ -222,6 +237,7 @@ class NeatlogsReadbackReader:
             and context.status == "success"
             and not context.truncated
             and len(spans) == context.span_count
+            and len({span.span_id for span in spans}) == len(spans)
             and expected.link == context.root_span.metadata
             and set(expected.expected_span_refs) == {span.span_id for span in spans}
         )

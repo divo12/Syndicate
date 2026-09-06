@@ -3,7 +3,7 @@
 from uuid import UUID
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from syndicate.observability.neatlogs_capture import RunLink
 from syndicate.observability.neatlogs_readback import (
@@ -105,3 +105,31 @@ def test_provider_result_aliases_remain_fail_closed_when_missing() -> None:
     value = expected()
     receipt = Reader('{"results":[]}', context(value.link)).fetch(value)
     assert not receipt.complete
+
+
+def test_duplicate_trace_or_span_data_is_incomplete() -> None:
+    value = expected()
+    duplicate_trace = Reader(
+        '{"traces":[{"trace_id":"trace"},{"trace_id":"trace"}]}',
+        context(value.link),
+    )
+    assert not duplicate_trace.fetch(value).complete
+    duplicate_span = (
+        context(value.link)
+        .replace(
+            "}]}}",
+            '},{"span_id":"child","span_type":"TOOL","name":"again","status":"success"}]}}',
+        )
+        .replace('"span_count":2', '"span_count":3')
+    )
+    assert not reader(value, duplicate_span).fetch(value).complete
+
+
+def test_expected_span_ids_cannot_repeat() -> None:
+    value = expected()
+    with pytest.raises(ValidationError):
+        ExpectedTrace(
+            link=value.link,
+            trace_ref=value.trace_ref,
+            expected_span_refs=("root", "root"),
+        )
