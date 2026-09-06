@@ -18,6 +18,7 @@ from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.baseline import prepare_baseline
+from syndicate.observability.tracing import neatlogs
 from syndicate.runtime_contracts import RuntimeRequest, installed_runtime
 from syndicate.shell import ShellBinding, ShellRequest
 from syndicate.shell_backend import E2BShell
@@ -51,22 +52,26 @@ async def run_on_controller(
     harness_dir: Path,
     framework_lock: Path,
 ) -> str:
-    installed_runtime()
-    baseline = prepare_baseline(
-        harness_dir,
-        framework_lock,
-        request.baseline.model,
-        request.baseline.prompt_variables,
-    )
-    if baseline.identity_hash != request.baseline.identity_hash:
-        raise ValueError("Runtime baseline differs from approved declaration")
-    if not key.get_secret_value().strip():
-        raise ValueError("Explicit API credential required")
-    async with ShellBinding(
-        E2BShell(sandbox, request.baseline.prompt_variables.working_directory),
-        timeout_ms=request.shell_timeout_ms,
-    ) as shell:
-        return await _run(request, key, shell, harness_dir)
+    with neatlogs.trace("solve-benchmark-task", kind="WORKFLOW") as span:
+        span.set_attribute("input.value", request.instruction)
+        installed_runtime()
+        baseline = prepare_baseline(
+            harness_dir,
+            framework_lock,
+            request.baseline.model,
+            request.baseline.prompt_variables,
+        )
+        if baseline.identity_hash != request.baseline.identity_hash:
+            raise ValueError("Runtime baseline differs from approved declaration")
+        if not key.get_secret_value().strip():
+            raise ValueError("Explicit API credential required")
+        async with ShellBinding(
+            E2BShell(sandbox, request.baseline.prompt_variables.working_directory),
+            timeout_ms=request.shell_timeout_ms,
+        ) as shell:
+            result = await _run(request, key, shell, harness_dir)
+        span.set_attribute("output.value", result)
+        return result
 
 
 async def _run(
@@ -76,8 +81,12 @@ async def _run(
     completion = _Completion()
 
     async def invoke(value: ShellRequest) -> _ToolReply:
-        result = await shell.run_shell_command(value)
-        return _ToolReply(result.content, result.return_display)
+        with neatlogs.trace("run-shell-command", kind="TOOL") as span:
+            span.set_attribute("tool.name", "run_shell_command")
+            span.set_attribute("input.value", value.model_dump_json())
+            result = await shell.run_shell_command(value)
+            span.set_attribute("output.value", result.model_dump_json())
+            return _ToolReply(result.content, result.return_display)
 
     def tool(
         command: str,
@@ -126,6 +135,7 @@ async def _run(
         max_retries=0,
         timeout=request.budget.max_seconds,
     ) as client:
+        client = neatlogs.wrap(client)
         try:
             async with asyncio.timeout(request.budget.max_seconds):
                 result = await agent.run_async(
