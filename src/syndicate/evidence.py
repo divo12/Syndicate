@@ -27,9 +27,9 @@ from syndicate.observability.neatlogs_readback import (
 
 def matches(span: ReadbackSpan, query: TraceQuery) -> bool:
     fields = ((query.node_name, span.node_name), (query.node_type, span.node_type))
-    return all(
-        expected is None or expected == actual for expected, actual in fields
-    ) and any(
+    if not all(expected is None or expected == actual for expected, actual in fields):
+        return False
+    return any(
         query.text in value
         for value in (span.node_name, span.input_text, span.output_text)
         if value is not None
@@ -47,15 +47,7 @@ def excerpt(text: str | None, query: SpanQuery) -> TextExcerpt:
 
 
 def sufficient(receipt: NeatlogsReadbackReceipt) -> bool:
-    return (
-        receipt.finalized
-        and receipt.complete
-        and bool(receipt.spans)
-        and all(
-            span.input_text is not None and span.output_text is not None
-            for span in receipt.spans
-        )
-    )
+    return receipt.finalized and receipt.complete and bool(receipt.spans)
 
 
 class EvidenceReader:

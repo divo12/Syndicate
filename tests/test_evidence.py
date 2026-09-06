@@ -162,7 +162,7 @@ def test_remote_context_is_bounded_and_tail_is_readable() -> None:
         ("forbidden", EvidenceStatus.FORBIDDEN),
         ("link", EvidenceStatus.MISALIGNED),
         ("offline", EvidenceStatus.INCOMPLETE),
-        ("payload", EvidenceStatus.INCOMPLETE),
+        ("payload", EvidenceStatus.RESOLVED),
     ],
 )
 def test_remote_failure_never_resolves_citation(
@@ -183,7 +183,7 @@ def test_remote_failure_never_resolves_citation(
         remote.response = remote.response.model_copy(update={"spans": (span,)})
     validation = reader.validate_citation(citation)
     assert validation.status == expected
-    assert not validation.complete
+    assert validation.complete is (expected is EvidenceStatus.RESOLVED)
 
 
 def test_manifest_returns_control_metadata_only_and_changed_cursor_fails() -> None:

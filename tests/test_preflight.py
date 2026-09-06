@@ -103,7 +103,7 @@ def test_rejects_forged_final_split_and_dirty_checkout(
     with pytest.raises(ValueError, match="approved hash"):
         preflight(command(controller), forged)
     (controller.benchmark_root / "untracked").touch()
-    with pytest.raises(ValueError, match="clean"):
+    with pytest.raises(ValueError, match="Benchmark checkout"):
         preflight(command(controller), controller)
 
 
