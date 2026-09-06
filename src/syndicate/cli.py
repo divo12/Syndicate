@@ -4,6 +4,8 @@ import hashlib
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from syndicate.cli_envelope import (
     ArtifactRef,
     CommandError,
@@ -15,6 +17,7 @@ from syndicate.cli_envelope import (
 from syndicate.preflight import (
     AdmissionError,
     ControllerConfig,
+    InfrastructureError,
     preflight,
     prepare_preflight,
 )
@@ -46,13 +49,23 @@ def failure(
         operation_id=command.operation_id if command else None,
         attempt_id=command.attempt_id if command else None,
         status=status,
-        error=CommandError(reason=reason, message="Controller input validation failed"),
+        error=CommandError(
+            reason=reason,
+            message={
+                ErrorReason.INVALID_REQUEST: "Request validation or admission failed",
+                ErrorReason.INVALID_CONFIGURATION: "Configuration validation failed",
+                ErrorReason.INFRASTRUCTURE: "Runtime infrastructure failure",
+            }[reason],
+        ),
     )
 
 
 def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     anchor = contained(root / "controller.json", root)
-    controller = ControllerConfig.model_validate_json(anchor.read_bytes())
+    try:
+        controller = ControllerConfig.model_validate_json(anchor.read_bytes())
+    except ValidationError:
+        raise InfrastructureError("Invalid controller declaration") from None
     return execute_preflight(command, run, controller)
 
 
@@ -89,16 +102,19 @@ def operator_preflight(config_file: Path, root: Path) -> tuple[CommandReceipt, i
             with (run / f"{name}.json").open("x", encoding="utf-8") as output:
                 output.write(model.model_dump_json())
         return execute_preflight(command, run, controller), 0
+    except (OSError, InfrastructureError):
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
     except ValueError:
         return failure(
             CommandStatus.BLOCKED, ErrorReason.INVALID_CONFIGURATION, command
         ), 2
-    except OSError:
-        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
 
 
 def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
-    root = Path.cwd().resolve() / ".syndicate"
+    try:
+        root = Path.cwd().resolve() / ".syndicate"
+    except OSError:
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, None), 1
     if len(arguments) == 3 and arguments[:2] == ["preflight", "--config"]:
         return operator_preflight(Path(arguments[2]), root)
     try:
@@ -109,12 +125,12 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
         return execute(command, run, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2
+    except (OSError, InfrastructureError):
+        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
     except ValueError:
         return failure(
             CommandStatus.BLOCKED, ErrorReason.INVALID_CONFIGURATION, command
         ), 0
-    except OSError:
-        return failure(CommandStatus.FAILED, ErrorReason.INFRASTRUCTURE, command), 1
 
 
 def main(arguments: list[str]) -> int:

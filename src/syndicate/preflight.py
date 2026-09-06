@@ -15,6 +15,10 @@ class AdmissionError(ValueError):
     """Request does not match the controller declaration."""
 
 
+class InfrastructureError(ValueError):
+    """Controller or benchmark infrastructure is unavailable or invalid."""
+
+
 class PreflightConfig(WireModel):
     """Operator-owned campaign inputs; relative paths are based on the config file."""
 
@@ -47,14 +51,23 @@ def configuration_hash(settings: ModelSettings, budget: CampaignBudgetPolicy) ->
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _load_manifest(config: PreflightConfig) -> benchmark.BenchmarkManifest:
+    try:
+        return benchmark.BenchmarkManifest.load(
+            config.benchmark_root, benchmark.ITSMBENCH_REVISION, config.assignments
+        )
+    except ValueError:
+        raise InfrastructureError("Benchmark checkout validation failed") from None
+
+
 def prepare_preflight(config_file: Path) -> tuple[PreflightCommand, ControllerConfig]:
     """Admit a fresh offline request from trusted operator configuration."""
     config_file = config_file.resolve(strict=True)
     config = PreflightConfig.model_validate_json(config_file.read_bytes())
     env_file = (config_file.parent / config.env_file).resolve(strict=True)
     benchmark_root = (config_file.parent / config.benchmark_root).resolve(strict=True)
-    manifest = benchmark.BenchmarkManifest.load(
-        benchmark_root, benchmark.ITSMBENCH_REVISION, config.assignments
+    manifest = _load_manifest(
+        config.model_copy(update={"benchmark_root": benchmark_root})
     )
     settings = load_model_config(env_file).settings
     command = PreflightCommand(
@@ -75,15 +88,13 @@ def prepare_preflight(config_file: Path) -> tuple[PreflightCommand, ControllerCo
 def preflight(
     command: PreflightCommand, controller: ControllerConfig
 ) -> PreflightResult:
-    manifest = benchmark.BenchmarkManifest.load(
-        controller.benchmark_root, benchmark.ITSMBENCH_REVISION, controller.assignments
-    )
-    if manifest.content_hash != controller.approved_manifest_hash:
-        raise ValueError("Controller registry does not match approved hash")
     if command.manifest_hash != controller.approved_manifest_hash:
         raise AdmissionError("Request registry is not controller approved")
     if command.content_hash not in controller.approved_request_hashes:
         raise AdmissionError("Request is not controller approved")
+    manifest = _load_manifest(controller)
+    if manifest.content_hash != controller.approved_manifest_hash:
+        raise ValueError("Controller registry does not match approved hash")
     model = load_model_config(controller.env_file)
     if (
         configuration_hash(model.settings, controller.budget)

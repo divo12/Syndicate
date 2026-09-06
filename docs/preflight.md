@@ -62,6 +62,11 @@ configuration or invocation, and 1 for filesystem/infrastructure failures. Error
 omit configuration values. Existing runs are preserved; a failed write may leave
 an incomplete run directory, which has no successful terminal receipt.
 
+An unavailable working directory, invalid benchmark checkout, or corrupt internal
+controller declaration is an infrastructure failure. Internal requests are admitted
+before benchmark access, so an unapproved request is rejected even if the checkout
+is broken. Receipt validation enforces outcome fields and matching artifact IDs.
+
 The command validates pinned source, split assignments, and nonsecret settings
 before admission, then rechecks them during execution. It never updates the
 shared `.syndicate/controller.json` anchor used by internal callers. Keep both
