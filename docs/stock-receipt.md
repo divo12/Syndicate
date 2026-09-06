@@ -6,6 +6,15 @@ UID, completion flag and timestamp. The postprocessor consumes that exact receip
 only after Harbor's original verifier completes; it rejects missing IDs, adapter,
 ordering, cleanup proof or verifier result and never invokes a verifier itself.
 
+Publication flushes and syncs a temporary file in the receipt directory, then
+links it to `cleanup.json` without replacing an existing receipt. Failed writes
+leave no partial public receipt. The temporary name is removed on exit.
+
+The bridge accepts Harbor's concrete `TrialResult`. Agent and verifier intervals
+must both be complete, timezone-aware and ordered. The cleanup timestamp must
+fall within agent execution, and verification must start after agent execution
+finishes. The cleanup object is the sole authority for cleanup status.
+
 ```mermaid
 flowchart LR
   A[SyndicateNexAUAgent.run] --> C[settled cleanup]

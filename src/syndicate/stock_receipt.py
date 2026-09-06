@@ -1,12 +1,13 @@
 """Controller-owned receipt bridge for Harbor's stock single-step lifecycle."""
 
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from tempfile import NamedTemporaryFile
 from uuid import UUID
 
-from harbor.models.trial.result import AgentInfo, TimingInfo
-from harbor.models.verifier.result import VerifierResult
+from harbor.models.trial.result import TimingInfo, TrialResult
+from pydantic import AwareDatetime
 
 from syndicate.benchmark import RunReceipt, classify_verifier
 from syndicate.cli_envelope import WireModel
@@ -24,30 +25,7 @@ class ControllerTrialBinding(WireModel):
 
 class CleanupControlReceipt(ControllerTrialBinding):
     cleanup: CleanupReceipt
-    written_at: datetime
-
-
-class _StockResult(Protocol):
-    @property
-    def id(self) -> UUID: ...
-
-    @property
-    def task_name(self) -> str: ...
-
-    @property
-    def agent_info(self) -> AgentInfo: ...
-
-    @property
-    def agent_execution(self) -> TimingInfo | None: ...
-
-    @property
-    def verifier(self) -> TimingInfo | None: ...
-
-    @property
-    def verifier_result(self) -> VerifierResult | None: ...
-
-    @property
-    def exception_info(self) -> object | None: ...
+    written_at: AwareDatetime
 
 
 def _path(binding: ControllerTrialBinding, root: Path) -> Path:
@@ -73,8 +51,11 @@ def emit_cleanup_receipt(
     )
     path = _path(binding, root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as output:
+    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent) as output:
         output.write(receipt.model_dump_json())
+        output.flush()
+        os.fsync(output.fileno())
+        os.link(output.name, path)
     return receipt
 
 
@@ -92,12 +73,14 @@ def load_cleanup_receipt(
 def postprocess_stock_result(
     binding: ControllerTrialBinding,
     cleanup: CleanupControlReceipt,
-    result: _StockResult,
+    result: TrialResult,
     raw_result_ref: str,
 ) -> RunReceipt:
     """Correlate one stock Harbor result; never invoke a verifier."""
     if not _matches(cleanup, binding):
         raise ValueError("Cleanup receipt identity does not match controller binding")
+    if not cleanup.cleanup.complete:
+        raise ValueError("Incomplete cleanup cannot authorize a stock trial receipt")
     if result.id != binding.run_id:
         raise ValueError("Harbor run ID does not match controller binding")
     if result.task_name.rsplit("/", 1)[-1] != binding.task_id:
@@ -106,14 +89,13 @@ def postprocess_stock_result(
         raise ValueError("Harbor agent identity does not match Syndicate adapter")
     if result.exception_info is not None or result.verifier_result is None:
         raise ValueError("Stock Harbor result is incomplete")
-    timing = _timing(result.agent_execution, result.verifier)
+    timing = _timing(result.agent_execution, result.verifier, cleanup.written_at)
     verifier = classify_verifier(result.verifier_result, raw_result_ref)
     return RunReceipt(
         operation_id=binding.operation_id,
         attempt_id=binding.attempt_id,
         run_id=binding.run_id,
         task_id=binding.task_id,
-        cleanup_complete=cleanup.cleanup.complete,
         cleanup=cleanup.cleanup,
         outcome=verifier.outcome,
         verifier=verifier,
@@ -123,17 +105,22 @@ def postprocess_stock_result(
 
 
 def _timing(
-    agent: TimingInfo | None, verifier: TimingInfo | None
+    agent: TimingInfo | None, verifier: TimingInfo | None, written_at: datetime
 ) -> tuple[datetime, datetime]:
-    if (
-        agent is None
-        or verifier is None
-        or agent.finished_at is None
-        or verifier.started_at is None
-        or agent.finished_at >= verifier.started_at
-    ):
+    agent_start, agent_end = _completed_interval(agent)
+    verifier_start, _ = _completed_interval(verifier)
+    if not agent_start <= written_at <= agent_end < verifier_start:
         raise ValueError("Stock verifier must begin after agent cleanup returns")
-    return agent.finished_at, verifier.started_at
+    return agent_end, verifier_start
+
+
+def _completed_interval(timing: TimingInfo | None) -> tuple[datetime, datetime]:
+    if timing is None or timing.started_at is None or timing.finished_at is None:
+        raise ValueError("Stock execution timing is incomplete")
+    start, end = timing.started_at, timing.finished_at
+    if start.utcoffset() is None or end.utcoffset() is None or start > end:
+        raise ValueError("Stock execution timing must be aware and ordered")
+    return start, end
 
 
 def _matches(receipt: CleanupControlReceipt, binding: ControllerTrialBinding) -> bool:
