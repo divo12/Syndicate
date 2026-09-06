@@ -105,6 +105,36 @@ def test_failed_write_leaves_no_partial_receipt(
     assert not [p for p in tmp_path.rglob("*") if p.is_file()]
 
 
+def test_fabricated_or_tampered_receipt_fails_closed(tmp_path: Path) -> None:
+    identity = binding()
+    _write_settled_cleanup(
+        _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
+    )
+    path = next(tmp_path.rglob("cleanup.json"))
+    forged = cleanup(identity).model_copy(update={"controller_seal": "forged"})
+    path.write_text(forged.model_dump_json(), encoding="utf-8")
+    with pytest.raises(ValueError, match="authentic"):
+        load_cleanup_receipt(identity, tmp_path)
+
+
+def test_symlinked_receipt_path_fails_closed(tmp_path: Path) -> None:
+    identity = binding()
+    receipt_dir = tmp_path / str(identity.operation_id)
+    receipt_dir.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(OSError):
+        load_cleanup_receipt(identity, tmp_path)
+
+
+def test_context_mismatch_fails_closed(tmp_path: Path) -> None:
+    identity = binding()
+    _write_settled_cleanup(
+        _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
+    )
+    wrong_context = identity.model_copy(update={"environment_context_id": "other"})
+    with pytest.raises(ValueError, match="authentic"):
+        load_cleanup_receipt(wrong_context, tmp_path)
+
+
 @pytest.mark.parametrize("field", ["operation_id", "attempt_id", "run_id", "task_id"])
 def test_rejects_cleanup_identity(field: str) -> None:
     identity = binding()
