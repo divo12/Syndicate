@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from syndicate.cli_envelope import (
+    ArtifactKind,
     ArtifactRef,
     CommandError,
     CommandReceipt,
@@ -53,6 +54,7 @@ def execute(command: PreflightCommand, run: Path, root: Path) -> CommandReceipt:
     with (run / "preflight.json").open("xb") as artifact:
         artifact.write(payload)
     reference = ArtifactRef(
+        kind=ArtifactKind.PREFLIGHT,
         operation_id=command.operation_id,
         attempt_id=command.attempt_id,
         sha256=hashlib.sha256(payload).hexdigest(),
