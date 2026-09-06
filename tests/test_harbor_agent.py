@@ -10,7 +10,7 @@ from e2b.sandbox.commands.command_handle import CommandExitException, CommandRes
 from pydantic import SecretStr, ValidationError
 from test_runtime_request import request
 
-from syndicate.harbor_agent import CleanupReceipt, HarborAgent
+from syndicate.adapters.harbor_agent import CleanupReceipt, HarborAgent
 
 
 def agent() -> HarborAgent:
@@ -30,7 +30,7 @@ def test_success_proof_uses_existing_controller_runner() -> None:
     runner = agent()
     value, key = request(), SecretStr("fixture")
     with patch(
-        "syndicate.harbor_agent.run_on_controller", new_callable=AsyncMock
+        "syndicate.adapters.harbor_agent.run_on_controller", new_callable=AsyncMock
     ) as run:
         receipt = asyncio.run(runner.run(value, key))
     assert receipt == CleanupReceipt(complete=True)
@@ -56,7 +56,7 @@ def test_probe_failure_never_runs_agent(exit_code: int) -> None:
             ),
         ),
         patch(
-            "syndicate.harbor_agent.run_on_controller", new_callable=AsyncMock
+            "syndicate.adapters.harbor_agent.run_on_controller", new_callable=AsyncMock
         ) as run,
     ):
         with pytest.raises(PermissionError):
@@ -72,7 +72,7 @@ def test_failed_execution_or_cleanup_has_no_success_receipt(
 ) -> None:
     runner = agent()
     with patch(
-        "syndicate.harbor_agent.run_on_controller",
+        "syndicate.adapters.harbor_agent.run_on_controller",
         new_callable=AsyncMock,
         side_effect=failure,
     ):

@@ -19,16 +19,16 @@ from nexau.archs.tool import Tool
 from openai import OpenAI
 from pydantic import SecretStr
 
-from syndicate.baseline import prepare_baseline
-from syndicate.observability.tracing import neatlogs
-from syndicate.runtime_contracts import (
+from syndicate.adapters.e2b_shell import E2BShell
+from syndicate.models.baseline import prepare_baseline
+from syndicate.models.runtime import (
     RoleDispatchReceipt,
     RoleDispatchRequest,
     RuntimeRequest,
     installed_runtime,
 )
-from syndicate.shell import ShellBinding, ShellRequest
-from syndicate.shell_backend import E2BShell
+from syndicate.models.shell import ShellBinding, ShellRequest
+from syndicate.observability.tracing import neatlogs
 
 
 class RuntimeStopped(RuntimeError):

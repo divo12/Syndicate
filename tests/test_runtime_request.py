@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from syndicate.baseline import PromptVariables, prepare_baseline
-from syndicate.budget_policy import BudgetCap
-from syndicate.model_config import ModelSettings
-from syndicate.runtime_contracts import RuntimeRequest
+from syndicate.models.baseline import PromptVariables, prepare_baseline
+from syndicate.models.budget import BudgetCap
+from syndicate.models.model_config import ModelSettings
+from syndicate.models.runtime import RuntimeRequest
 
 
 def request() -> RuntimeRequest:
@@ -63,10 +63,10 @@ def test_runtime_requires_explicit_credential() -> None:
 
     from pydantic import SecretStr
 
-    from syndicate.nexau_runtime import run_on_controller
+    from syndicate.services.runtime import run_on_controller
 
     root = Path(__file__).resolve().parents[1]
-    with patch("syndicate.nexau_runtime.E2BShell") as backend:
+    with patch("syndicate.services.runtime.E2BShell") as backend:
         with pytest.raises(ValueError, match="Explicit API credential"):
             with asyncio.Runner() as runner:
                 runner.run(

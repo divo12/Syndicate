@@ -6,8 +6,12 @@ import pytest
 import test_preflight as preflight_tests
 
 from syndicate.cli import main
-from syndicate.cli_envelope import CommandReceipt, CommandStatus, PreflightCommand
-from syndicate.preflight import ControllerConfig, PreflightConfig, PreflightResult
+from syndicate.models.envelope import CommandReceipt, CommandStatus, PreflightCommand
+from syndicate.services.preflight import (
+    ControllerConfig,
+    PreflightConfig,
+    PreflightResult,
+)
 
 checkout = preflight_tests.checkout
 controller = preflight_tests.controller

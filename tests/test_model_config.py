@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from syndicate.model_config import (
+from syndicate.models.model_config import (
     ApiFamily,
     ModelConfigError,
     ModelSettings,

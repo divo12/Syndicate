@@ -9,9 +9,9 @@ from uuid import UUID
 from harbor.models.trial.result import TimingInfo, TrialResult
 from pydantic import AwareDatetime
 
-from syndicate.benchmark import RunReceipt, classify_verifier
-from syndicate.cli_envelope import WireModel
-from syndicate.harbor_agent import CleanupReceipt
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.models.envelope import WireModel
+from syndicate.services.benchmark import RunReceipt, classify_verifier
 
 AGENT_NAME = "syndicate-nexau"
 

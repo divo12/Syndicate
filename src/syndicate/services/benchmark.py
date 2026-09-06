@@ -12,7 +12,7 @@ from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.verifier import Verifier
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.harbor_agent import CleanupReceipt
+from syndicate.adapters.harbor_agent import CleanupReceipt
 
 
 class RunOutcome(StrEnum):

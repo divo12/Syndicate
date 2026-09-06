@@ -10,11 +10,11 @@ from nexau.archs.tool import Tool
 from openai import OpenAI
 from pydantic import ValidationError
 
-from syndicate.budget_policy import BudgetCap, ProductRole
-from syndicate.model_config import ModelSettings
-from syndicate.nexau_runtime import dispatch_role
+from syndicate.models.budget import BudgetCap, ProductRole
+from syndicate.models.model_config import ModelSettings
+from syndicate.models.runtime import RoleDispatchRequest
 from syndicate.observability.tracing import neatlogs
-from syndicate.runtime_contracts import RoleDispatchRequest
+from syndicate.services.runtime import dispatch_role
 
 
 def request(**changes: object) -> RoleDispatchRequest:

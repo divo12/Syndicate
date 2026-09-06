@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from syndicate.model_config import ModelSettings
+from syndicate.models.model_config import ModelSettings
 
 
 class SeedArtifact(BaseModel):

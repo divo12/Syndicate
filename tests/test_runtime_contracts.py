@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from syndicate.runtime_contracts import RuntimeIdentity, installed_runtime
+from syndicate.models.runtime import RuntimeIdentity, installed_runtime
 
 
 def test_actual_installed_runtime_is_pinned() -> None:
@@ -17,7 +17,7 @@ def test_actual_installed_runtime_is_pinned() -> None:
 
 
 def test_alternate_package_version_is_rejected() -> None:
-    with patch("syndicate.runtime_contracts.version", return_value="0.0.0"):
+    with patch("syndicate.models.runtime.version", return_value="0.0.0"):
         with pytest.raises(ValidationError):
             installed_runtime()
 
@@ -33,6 +33,6 @@ def test_alternate_e2b_version_is_rejected() -> None:
     def installed_version(package: str) -> str:
         return "0.0.0" if package == "e2b" else version(package)
 
-    with patch("syndicate.runtime_contracts.version", side_effect=installed_version):
+    with patch("syndicate.models.runtime.version", side_effect=installed_version):
         with pytest.raises(ValidationError, match="e2b_version"):
             installed_runtime()

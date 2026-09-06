@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from syndicate.budget_policy import (
+from syndicate.models.budget import (
     BudgetCap,
     CampaignBudgetPolicy,
     ProductRole,

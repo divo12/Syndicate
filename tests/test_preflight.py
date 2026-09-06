@@ -11,9 +11,9 @@ import test_benchmark_manifest as benchmark_tests
 from pydantic import ValidationError
 from test_budget_policy import policy
 
-from syndicate.cli_envelope import PreflightCommand
-from syndicate.model_config import load_model_config
-from syndicate.preflight import ControllerConfig, configuration_hash, preflight
+from syndicate.models.envelope import PreflightCommand
+from syndicate.models.model_config import load_model_config
+from syndicate.services.preflight import ControllerConfig, configuration_hash, preflight
 
 checkout = benchmark_tests.checkout
 
@@ -90,7 +90,7 @@ def test_rejects_forged_final_split_and_dirty_checkout(
 ) -> None:
     from dataclasses import replace
 
-    from syndicate.benchmark_manifest import Split
+    from syndicate.repositories.benchmark_manifest import Split
 
     forged = controller.model_copy(
         update={
@@ -159,7 +159,7 @@ def test_cli_receipt_matches_artifact(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from syndicate.cli import main
-    from syndicate.cli_envelope import CommandReceipt, CommandStatus
+    from syndicate.models.envelope import CommandReceipt, CommandStatus
 
     request = command(controller)
     path = request_path
@@ -178,8 +178,8 @@ def test_artifact_hash_and_ids_match_receipt(
     request_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from syndicate.cli import main
-    from syndicate.cli_envelope import CommandReceipt
-    from syndicate.preflight import PreflightResult
+    from syndicate.models.envelope import CommandReceipt
+    from syndicate.services.preflight import PreflightResult
 
     assert main(["execute", "--request", str(request_path)]) == 0
     receipt = CommandReceipt.model_validate_json(capsys.readouterr().out)
@@ -199,7 +199,7 @@ def test_cli_rejects_boundary_failures(
     request_path: Path, fault: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from syndicate.cli import main
-    from syndicate.cli_envelope import CommandReceipt, CommandStatus
+    from syndicate.models.envelope import CommandReceipt, CommandStatus
 
     path = request_path
     if fault == "outside":
@@ -233,7 +233,7 @@ def test_cli_rejects_boundary_failures(
 def test_module_emits_one_safe_receipt_for_invalid_request(
     request_path: Path, raw: str
 ) -> None:
-    from syndicate.cli_envelope import CommandReceipt, ErrorReason
+    from syndicate.models.envelope import CommandReceipt, ErrorReason
 
     request_path.write_text(raw)
     process = subprocess.run(
