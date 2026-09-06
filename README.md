@@ -2,6 +2,10 @@
 
 Project workspace for Syndicate.
 
+The full pinned benchmark lives in [`benchmark/ITSMBench`](benchmark/README.md).
+Before running checks, initialize it with
+`git submodule update --init benchmark/ITSMBench`.
+
 ## Python foundation
 
 Python 3.13.7 and uv 0.12.5 are the development toolchain. Install the
