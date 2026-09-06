@@ -34,3 +34,7 @@ Remote readback accepts only a controller-sealed receipt binding the run link,
 trace ID, ordered span IDs (including the workflow root), and canonical digest.
 It validates a complete finalized trace tree without relying on span metadata or
 persisting payloads locally.
+
+The controller’s in-memory capture receipt is the correlation authority. A
+receipt with changed link, trace, span order, or digest is rejected before MCP
+readback; Neatlogs span metadata is never an authority source.

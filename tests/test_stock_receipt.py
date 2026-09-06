@@ -9,6 +9,7 @@ from harbor.models.trial.result import AgentInfo, TimingInfo, TrialResult
 from harbor.models.verifier.result import VerifierResult
 
 from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.services import stock
 from syndicate.services.benchmark import RunOutcome
 from syndicate.services.stock import (
     AGENT_IMPORT,
@@ -52,7 +53,7 @@ def result(identity: ControllerTrialBinding) -> TrialResult:
 
 
 def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
-    return CleanupControlReceipt(
+    receipt = CleanupControlReceipt(
         operation_id=identity.operation_id,
         attempt_id=identity.attempt_id,
         run_id=identity.run_id,
@@ -63,6 +64,7 @@ def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
         uid=10001,
         written_at=ENDED - timedelta(seconds=1),
     )
+    return receipt.model_copy(update={"controller_seal": stock._cleanup_seal(receipt)})
 
 
 def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> None:
@@ -136,6 +138,9 @@ def test_rejects_cleanup_outside_agent_interval(offset: int) -> None:
     identity = binding()
     invalid = cleanup(identity).model_copy(
         update={"written_at": ENDED + timedelta(seconds=offset)}
+    )
+    invalid = invalid.model_copy(
+        update={"controller_seal": stock._cleanup_seal(invalid)}
     )
     with pytest.raises(ValueError, match="after agent cleanup"):
         postprocess_stock_result(identity, invalid, result(identity), "harbor:run")

@@ -35,8 +35,14 @@ class ExpectedTrace(BaseModel):
             or value.binding_digest is None
             or value.trace_ref is None
             or len(value.expected_span_refs) != len(set(value.expected_span_refs))
+            or value.binding_digest
+            != CaptureReceipt.digest(
+                value.link, value.trace_ref, value.expected_span_refs
+            )
         ):
-            raise ValueError("Expected span IDs must be unique")
+            raise ValueError(
+                "Expected trace requires a valid controller-sealed receipt"
+            )
         return value
 
     @property
