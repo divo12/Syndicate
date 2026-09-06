@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from harbor.models.trial.result import TimingInfo, TrialResult
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, PrivateAttr
 
 from syndicate.adapters.harbor_agent import CleanupReceipt
 from syndicate.models.envelope import WireModel
@@ -31,6 +31,22 @@ class ControllerTrialBinding(WireModel):
 class _ControllerAuthority(WireModel):
     binding: ControllerTrialBinding
     root: Path
+    _cleanup: CleanupReceipt | None = PrivateAttr(default=None)
+
+    def observe_settled_cleanup(self, cleanup: CleanupReceipt) -> None:
+        """Internal handoff from the adapter's awaited HarborAgent.run result."""
+        if self._cleanup is not None:
+            raise ValueError("Controller cleanup was already observed")
+        if not cleanup.complete or cleanup.uid != CONTROLLER_UID:
+            raise ValueError(
+                "Only settled controller cleanup may authorize a stock receipt"
+            )
+        self._cleanup = cleanup
+
+    def issue(self, written_at: datetime) -> "CleanupControlReceipt":
+        if self._cleanup is None:
+            raise ValueError("Controller has not observed settled cleanup")
+        return _write_settled_cleanup(self, written_at)
 
 
 class CleanupControlReceipt(ControllerTrialBinding):
@@ -49,13 +65,12 @@ def _controller_authority(
 
 
 def _write_settled_cleanup(
-    authority: _ControllerAuthority, cleanup: CleanupReceipt, written_at: datetime
+    authority: _ControllerAuthority, written_at: datetime
 ) -> CleanupControlReceipt:
     """Persist one settled controller cleanup proof after HarborAgent.run returned."""
-    if not cleanup.complete or cleanup.uid != CONTROLLER_UID:
-        raise ValueError(
-            "Only settled controller cleanup may authorize a stock receipt"
-        )
+    cleanup = authority._cleanup
+    if cleanup is None:
+        raise ValueError("Controller has not observed settled cleanup")
     provisional = CleanupControlReceipt(
         **authority.binding.model_dump(),
         cleanup=cleanup,
