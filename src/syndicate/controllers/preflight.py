@@ -169,6 +169,8 @@ def execute_pure(
             store,
             load_model_config(controller.env_file).api_key,
             handlers or LiveHandlers(),
+            controller.benchmark_root,
+            controller.assignments,
         )
     if isinstance(command, JudgeTaskCommand):
         from syndicate.controllers.live_handlers import LiveHandlers, judge

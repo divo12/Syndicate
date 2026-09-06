@@ -16,6 +16,7 @@ from syndicate.models.candidate import CandidateWorkspace, IncumbentSnapshot
 from syndicate.models.commands import RunTrialCommand
 from syndicate.models.envelope import ArtifactKind, ArtifactRef, CommandStatus
 from syndicate.repositories.artifact_store import ArtifactStore
+from syndicate.repositories.benchmark_manifest import Assignment, Split
 
 
 def command(reference: ArtifactRef) -> RunTrialCommand:
@@ -56,6 +57,8 @@ def test_default_trial_handler_returns_typed_blocked_without_harbor(
         approved_request_hashes=(value.content_hash,),
         budget=SimpleNamespace(budget_for=lambda _: value.budget),
         env_file=tmp_path / "controller.env",
+        benchmark_root=tmp_path,
+        assignments=(Assignment("task-a-1", Split.DEVELOPMENT, "family"),),
     )
     (root / "controller.json").write_text("{}")
     monkeypatch.setattr(
