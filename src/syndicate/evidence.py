@@ -18,9 +18,9 @@ from syndicate.evidence_contracts import (
     TraceQuery,
 )
 from syndicate.observability.neatlogs_readback import (
+    ExpectedTrace,
     NeatlogsReadbackReader,
     NeatlogsReadbackReceipt,
-    NeatlogsTraceRef,
     ReadbackSpan,
 )
 
@@ -47,15 +47,7 @@ def excerpt(text: str | None, query: SpanQuery) -> TextExcerpt:
 
 
 def sufficient(receipt: NeatlogsReadbackReceipt) -> bool:
-    return (
-        receipt.finalized
-        and receipt.complete
-        and bool(receipt.spans)
-        and all(
-            span.input_text is not None and span.output_text is not None
-            for span in receipt.spans
-        )
-    )
+    return receipt.finalized and receipt.complete and bool(receipt.spans)
 
 
 class EvidenceReader:
@@ -79,7 +71,13 @@ class EvidenceReader:
         if grant is None:
             return EvidenceStatus.FORBIDDEN, None
         try:
-            receipt = self.remote.read(grant.link, NeatlogsTraceRef(trace_ref))
+            receipt = self.remote.fetch(
+                ExpectedTrace(
+                    link=grant.link,
+                    trace_ref=trace_ref,
+                    expected_span_refs=grant.expected_span_refs,
+                )
+            )
         except (OSError, ValueError):
             return EvidenceStatus.INCOMPLETE, None
         if (receipt.link, receipt.trace_ref, receipt.semantic_digest) != (

@@ -41,6 +41,7 @@ class EvidenceStatus(StrEnum):
 class EvidenceGrant(EvidenceModel):
     link: RunLink
     trace_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    expected_span_refs: tuple[str, ...] = Field(min_length=1)
     semantic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
