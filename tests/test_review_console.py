@@ -24,6 +24,7 @@ from syndicate.judge_contracts import (
 )
 from syndicate.review_console import ReceiptSource, ReviewCampaign, render_campaign
 from syndicate.review_navigation import render_finding_path
+from syndicate.review_report import HeldOutEvaluation, HeldOutStatus, ReviewReport
 from syndicate.selection_contracts import (
     ArmMetrics,
     ComparisonAssessment,
@@ -172,3 +173,41 @@ def test_render_finding_path_links_receipts_to_the_paired_comparison() -> None:
     assert candidate.diff_hash in page
     assert "inconclusive" in page
     assert "Synthetic preparation data" in page
+
+
+def test_report_serializes_limits_without_claiming_held_out_results() -> None:
+    campaign = ReviewCampaign(
+        campaign_id="campaign-1",
+        source=ReceiptSource.SYNTHETIC,
+        reports=(report(),),
+    )
+    assessment = ComparisonAssessment(
+        decision=ComparisonDecision.INCONCLUSIVE,
+        incumbent=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        candidate=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        reason_codes=("evidence-incomplete",),
+    )
+    report_view = ReviewReport(
+        campaign=campaign,
+        assessment=assessment,
+        held_out=HeldOutEvaluation(
+            status=HeldOutStatus.NOT_RUN,
+            task_ids=("task-held-out-1",),
+            limitation="Held-out evaluation has not run.",
+        ),
+        limitations=("Synthetic preparation data is not campaign evidence.",),
+    )
+
+    assert "not_run" in report_view.to_json()
+    assert "Held-out evaluation has not run." in report_view.to_markdown()
+    assert "Synthetic preparation data" in report_view.to_markdown()
