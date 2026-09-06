@@ -14,6 +14,7 @@ from syndicate.cli_envelope import (
     CommandStatus,
     ErrorReason,
     PreflightCommand,
+    export_schemas,
     parse_command,
 )
 from syndicate.preflight import AdmissionError, ControllerConfig, preflight
@@ -110,6 +111,10 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
 
 
 def main(arguments: list[str]) -> int:
+    if arguments == ["export-schema"]:
+        root = Path.cwd().resolve() / ".syndicate"
+        print(export_schemas(root).model_dump_json())
+        return 0
     receipt, exit_code = dispatch(arguments)
     if receipt.error:
         print(receipt.error.reason.value, file=sys.stderr)
