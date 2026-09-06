@@ -2,6 +2,10 @@
 
 Project workspace for Syndicate.
 
+The full pinned benchmark lives in [`benchmark/ITSMBench`](benchmark/README.md).
+Before running checks, initialize it with
+`git submodule update --init benchmark/ITSMBench`.
+
 ## Python foundation
 
 Python 3.13.7 and uv 0.12.5 are the development toolchain. Install the
@@ -32,3 +36,7 @@ To intentionally refresh transitive pins, regenerate and review the compact lock
 uv pip compile pyproject.toml --extra dev --group build --universal \
   --no-header --no-annotate -o requirements.lock
 ```
+
+Run offline campaign checks with
+`.venv/bin/python -m syndicate.cli preflight --config campaign.json`.
+See [preflight setup](docs/preflight.md) for an example configuration and outputs.

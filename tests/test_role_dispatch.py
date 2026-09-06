@@ -1,5 +1,6 @@
 import asyncio
 import json
+from threading import Event
 from unittest.mock import patch
 
 import httpx
@@ -12,6 +13,7 @@ from pydantic import ValidationError
 from syndicate.budget_policy import BudgetCap, ProductRole
 from syndicate.model_config import ModelSettings
 from syndicate.nexau_runtime import dispatch_role
+from syndicate.observability.tracing import neatlogs
 from syndicate.runtime_contracts import RoleDispatchRequest
 
 
@@ -87,7 +89,7 @@ def test_role_dispatch_uses_only_supplied_tool_and_returns_usage_ref() -> None:
         receipt = asyncio.run(dispatch_role(request(), (supplied,), value))
     assert receipt.final_text == "complete"
     assert receipt.usage_ref == "usage:role-dispatch"
-    assert supplied.disable_parallel
+    assert not supplied.disable_parallel
     assert len(calls) == 1
     assert '"read_status"' in json.dumps(calls[0])
     assert "run_shell_command" not in json.dumps(calls[0])
@@ -141,6 +143,56 @@ def test_role_dispatch_rejects_client_retries() -> None:
             asyncio.run(dispatch_role(request(), (), value))
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://other.example/openai/v1/",
+        "http://azure.example/openai/v1/",
+        "https://azure.example:444/openai/v1/",
+        "https://azure.example/other/",
+        "https://azure.example/openai/v1/?key=secret",
+        "https://user:secret@azure.example/openai/v1/",
+    ],
+)
+def test_role_dispatch_rejects_unapproved_endpoint(endpoint: str) -> None:
+    calls: list[dict[str, object]] = []
+    with client(calls) as value:
+        value.base_url = endpoint
+        with pytest.raises(ValueError, match="endpoint differs"):
+            asyncio.run(dispatch_role(request(), (), value))
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://AZURE.EXAMPLE:443/openai/v1/",
+        "https://azure.example/openai/v1",
+    ],
+)
+def test_role_dispatch_normalizes_approved_endpoint(endpoint: str) -> None:
+    calls: list[dict[str, object]] = []
+    approved = request().model.model_copy(update={"endpoint": endpoint})
+    with client(calls) as value:
+        receipt = asyncio.run(dispatch_role(request(model=approved), (), value))
+    assert receipt.final_text == "complete"
+    assert len(calls) == 1
+
+
+def test_role_dispatch_groups_one_wrapped_client_under_named_workflow() -> None:
+    calls: list[dict[str, object]] = []
+    with (
+        client(calls) as value,
+        patch.object(neatlogs, "trace", wraps=neatlogs.trace) as trace,
+        patch.object(neatlogs, "wrap", wraps=neatlogs.wrap) as wrap,
+    ):
+        asyncio.run(dispatch_role(request(), (), value))
+        wrap.assert_called_once_with(value)
+        trace.assert_called_once_with(
+            f"dispatch-{ProductRole.TASK_JUDGE.value}", kind="WORKFLOW"
+        )
+
+
 def test_role_dispatch_provider_failure_has_one_attempt() -> None:
     calls: list[dict[str, object]] = []
 
@@ -157,3 +209,63 @@ def test_role_dispatch_provider_failure_has_one_attempt() -> None:
         with pytest.raises(RuntimeError, match="agent execution"):
             asyncio.run(dispatch_role(request(), (), value))
     assert len(calls) == 1
+
+
+def test_cancellation_does_not_claim_running_tool_has_stopped() -> None:
+    started, release, finished = Event(), Event(), Event()
+
+    def block() -> str:
+        started.set()
+        try:
+            assert release.wait(5), "test must release its worker"
+            return "released"
+        finally:
+            finished.set()
+
+    supplied = tool()
+    supplied.implementation = block
+
+    def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp-tool",
+                "object": "response",
+                "created_at": 1,
+                "status": "completed",
+                "model": "gpt-5.4-mini",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "id": "fc1",
+                        "call_id": "call1",
+                        "name": "read_status",
+                        "arguments": "{}",
+                        "status": "completed",
+                    }
+                ],
+            },
+        )
+
+    async def exercise(value: OpenAI) -> None:
+        task = asyncio.create_task(dispatch_role(request(), (supplied,), value))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            # Python cancellation cannot kill the SDK's already-running thread.
+            assert not finished.is_set()
+        finally:
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 2)
+            if not task.done():
+                task.cancel()
+
+    with OpenAI(
+        api_key="fixture",
+        base_url="https://azure.example/openai/v1/",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    ) as value:
+        asyncio.run(exercise(value))

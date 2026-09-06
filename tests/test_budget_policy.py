@@ -60,11 +60,19 @@ def test_policy_rejects_duplicate_role_that_omits_another_role() -> None:
         CampaignBudgetPolicy(role_budgets=role_budgets, campaign_cap=cap())
 
 
-def test_policy_rejects_role_cap_above_campaign_cap() -> None:
+@pytest.mark.parametrize("count", [0, 3, 5])
+def test_policy_rejects_wrong_role_count(count: int) -> None:
+    roles = tuple(RoleBudget(role=role, cap=cap()) for role in ProductRole)
+    with pytest.raises(ValidationError):
+        CampaignBudgetPolicy(role_budgets=(roles + roles)[:count], campaign_cap=cap())
+
+
+@pytest.mark.parametrize("ceiling", [cap(tokens=99), cap(seconds=59), cap(spend=999)])
+def test_policy_rejects_role_cap_above_campaign_cap(ceiling: BudgetCap) -> None:
     with pytest.raises(ValidationError):
         CampaignBudgetPolicy(
             role_budgets=tuple(
                 RoleBudget(role=role, cap=cap()) for role in ProductRole
             ),
-            campaign_cap=cap(tokens=99),
+            campaign_cap=ceiling,
         )
