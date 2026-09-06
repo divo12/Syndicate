@@ -1,5 +1,6 @@
-"""MCP readback contracts; fake responses never write trajectory payloads."""
+"""MCP v2 finalization and linkage contracts."""
 
+from collections.abc import Callable
 from uuid import UUID
 
 import pytest
@@ -9,88 +10,104 @@ from syndicate.observability.neatlogs_capture import RunLink
 from syndicate.observability.neatlogs_readback import (
     ExpectedTrace,
     NeatlogsReadbackReader,
-    NeatlogsTraceRef,
 )
 
 
 class Reader(NeatlogsReadbackReader):
-    def __init__(self, search: str, context: str) -> None:
+    def __init__(self, response: str) -> None:
         super().__init__(SecretStr("test"))
-        self.search = search
-        self.context = context
+        self.response = response
 
     def _tool(self, name: str, arguments: str) -> str:
-        return self.search if name == "search_traces" else self.context
+        return self.response
 
 
 def expected() -> ExpectedTrace:
-    link = RunLink(
-        operation_id=UUID(int=1),
-        attempt_id=UUID(int=2),
-        run_id=UUID(int=3),
-        task_id="task",
-    )
     return ExpectedTrace(
-        link=link, trace_ref="trace", expected_span_refs=("root", "child")
+        link=RunLink(
+            operation_id=UUID(int=1),
+            attempt_id=UUID(int=2),
+            run_id=UUID(int=3),
+            task_id="task",
+        ),
+        trace_ref="trace",
+        expected_span_refs=("root", "child"),
     )
 
 
-def context(link: RunLink, status: str = "success", truncated: bool = False) -> str:
+def context(
+    link: RunLink | None,
+    *,
+    finalization: str = "finalized",
+    ready: bool = True,
+    payload: bool = True,
+    tree: bool = True,
+    truncated: bool = False,
+    count: int = 2,
+) -> str:
+    metadata = link.model_dump_json() if link is not None else "null"
     return (
-        '{"trace_id":"trace","status":"'
-        + status
-        + '","span_count":2,"truncated":'
+        '{"trace_id":"trace","status":"success","finalization_status":"'
+        + finalization
+        + '","verification_ready":'
+        + str(ready).lower()
+        + ',"span_payload_complete":'
+        + str(payload).lower()
+        + ',"span_tree_complete":'
+        + str(tree).lower()
+        + ',"span_count":'
+        + str(count)
+        + ',"returned_span_count":'
+        + str(count)
+        + ',"root_span_count":1,"truncated":'
         + str(truncated).lower()
-        + ',"root_span":{"span_id":"root","span_type":"WORKFLOW","name":"run",'
-        + '"status":"success","input":"in","output":"out","metadata":'
-        + link.model_dump_json()
-        + ',"children":[{"span_id":"child","span_type":"TOOL","name":"tool",'
-        + '"status":"success","input":"in","output":"out"}]}}'
+        + ',"spans":[{"span_id":"root","name":"run","type":"WORKFLOW","metadata":'
+        + metadata
+        + '},{"span_id":"child","parent_span_id":"root","name":"tool","type":"TOOL"}]}'
     )
 
 
-def reader(value: ExpectedTrace, raw: str) -> Reader:
-    return Reader('{"traces":[{"trace_id":"trace"}]}', raw)
-
-
-def test_complete_readback_requires_link_coverage_and_finalization() -> None:
+def test_known_finalized_v2_context_is_complete() -> None:
     value = expected()
-    receipt = reader(value, context(value.link)).fetch(value)
+    receipt = Reader(context(value.link)).fetch(value)
     assert receipt.finalized and receipt.complete
-    assert tuple(span.span_id for span in receipt.spans) == ("root", "child")
 
 
 @pytest.mark.parametrize(
-    ("search", "raw"),
+    "raw",
     [
-        ('{"traces":[]}', None),
-        (
-            '{"traces":[{"trace_id":"trace"}]}',
-            '{"trace_id":"trace","status":"error","span_count":1,"root_span":{"span_id":"root","span_type":"WORKFLOW","name":"run","status":"error"}}',
-        ),
-        ('{"traces":[{"trace_id":"trace"}]}', None),
+        lambda link: context(link, finalization="pending"),
+        lambda link: context(link, ready=False),
+        lambda link: context(link, payload=False),
+        lambda link: context(link, tree=False),
+        lambda link: context(link, truncated=True),
+        lambda link: context(link, count=1),
+        lambda link: context(None),
     ],
 )
-def test_missing_or_unfinalized_readback_is_incomplete(
-    search: str, raw: str | None
+def test_finality_and_linkage_gaps_are_incomplete(
+    raw: Callable[[RunLink], str],
 ) -> None:
     value = expected()
-    response = raw if raw is not None else context(value.link, truncated=True)
-    receipt = Reader(search, response).fetch(value)
+    receipt = Reader(raw(value.link)).fetch(value)
     assert not receipt.complete
 
 
-def test_mismatch_and_truncation_are_incomplete() -> None:
+def test_coverage_and_link_mismatch_are_incomplete() -> None:
     value = expected()
     wrong = value.link.model_copy(update={"attempt_id": UUID(int=9)})
-    assert not reader(value, context(wrong)).fetch(value).complete
-    assert not reader(value, context(value.link, truncated=True)).fetch(value).complete
+    assert not Reader(context(wrong)).fetch(value).complete
+    changed = value.model_copy(update={"expected_span_refs": ("root",)})
+    assert not Reader(context(value.link)).fetch(changed).complete
 
 
-def test_legacy_read_cannot_bypass_expected_span_set() -> None:
-    with pytest.raises(ValueError, match="coverage"):
-        NeatlogsReadbackReader(SecretStr("test")).read(
-            expected().link, NeatlogsTraceRef("trace")
+def test_duplicate_expected_span_ids_are_rejected() -> None:
+    value = expected()
+    with pytest.raises(ValidationError):
+        ExpectedTrace(
+            link=value.link,
+            trace_ref=value.trace_ref,
+            expected_span_refs=("root", "root"),
         )
 
 
@@ -99,32 +116,3 @@ def test_mcp_event_stream_envelope_is_supported() -> None:
     assert reader._json_response('event: message\ndata: {"jsonrpc":"2.0"}\n') == (
         '{"jsonrpc":"2.0"}'
     )
-
-
-def test_direct_context_does_not_depend_on_search_index() -> None:
-    value = expected()
-    direct = Reader('{"traces":[]}', context(value.link))
-    assert direct.fetch(value).complete
-
-
-def test_duplicate_span_data_is_incomplete() -> None:
-    value = expected()
-    duplicate_span = (
-        context(value.link)
-        .replace(
-            "}]}}",
-            '},{"span_id":"child","span_type":"TOOL","name":"again","status":"success"}]}}',
-        )
-        .replace('"span_count":2', '"span_count":3')
-    )
-    assert not reader(value, duplicate_span).fetch(value).complete
-
-
-def test_expected_span_ids_cannot_repeat() -> None:
-    value = expected()
-    with pytest.raises(ValidationError):
-        ExpectedTrace(
-            link=value.link,
-            trace_ref=value.trace_ref,
-            expected_span_refs=("root", "root"),
-        )
