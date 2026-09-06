@@ -8,6 +8,7 @@
     "@trigger.dev/sdk": "4.5.16"
   },
   "devDependencies": {
+    "@trigger.dev/build": "4.5.16",
     "@types/node": "22.18.0",
     "typescript": "5.9.2"
   }

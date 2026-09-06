@@ -9,5 +9,5 @@
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true
   },
-  "include": ["trigger/**/*.ts", "tests-ts/**/*.ts"]
+  "include": ["trigger.config.ts", "src/trigger/**/*.ts", "tests-ts/**/*.ts"]
 }

@@ -8,8 +8,8 @@ import type {
   CommandReceipt,
   PythonInvocation,
   TransportResult,
-} from "../trigger/transport.js";
-import { WorkflowError, runWorkflow } from "../trigger/workflow.js";
+} from "../src/trigger/transport.js";
+import { WorkflowError, runWorkflow } from "../src/trigger/workflow.js";
 
 const IDS = [
   "11111111-1111-4111-8111-111111111111",
