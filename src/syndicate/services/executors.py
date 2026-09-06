@@ -1,10 +1,15 @@
 """Task executors used by the job worker. Harbor is wired in a later slice."""
 
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from syndicate.models.jobs import ExecutorKind, TaskOutcome, TaskResult
-from syndicate.services.benchmark import RunOutcome, VerifierReceipt
+
+if TYPE_CHECKING:
+    from syndicate.services.benchmark import VerifierReceipt
 
 HarborTask = Callable[[str, int], TaskResult]
 
@@ -32,6 +37,8 @@ class SimulatedExecutor:
 
 
 def task_result_from_verifier(task_id: str, receipt: VerifierReceipt) -> TaskResult:
+    from syndicate.services.benchmark import RunOutcome
+
     if receipt.outcome is RunOutcome.PASS:
         return TaskResult(task_id=task_id, outcome=TaskOutcome.PASSED, reward=1.0)
     if receipt.outcome is RunOutcome.FAIL:
