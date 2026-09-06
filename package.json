@@ -1,10 +1,14 @@
 {
+  "packageManager": "bun@1.3.11",
   "scripts": {
     "test:trigger": "tsc && node --test .trigger-build/tests-ts/*.test.js",
     "typecheck:trigger": "tsc --noEmit"
   },
+  "dependencies": {
+    "@trigger.dev/sdk": "4.5.16"
+  },
   "devDependencies": {
-    "@types/node": "^22.18.0",
-    "typescript": "^5.9.2"
+    "@types/node": "22.18.0",
+    "typescript": "5.9.2"
   }
 }

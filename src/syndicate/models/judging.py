@@ -73,6 +73,21 @@ class JudgeTool(StrEnum):
     VERIFIER = "read_verifier_result"
 
 
+class ObservationStatus(StrEnum):
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class ToolObservation(JudgeObject):
+    """Deterministic judge-tool observation: status, recovery, and typed artifacts."""
+
+    status: ObservationStatus
+    summary: Text
+    next_actions: tuple[Text, ...] = ()
+    artifacts_json: Text
+
+
 class SupportQuote(JudgeObject):
     reference: Text
     quote: Text
@@ -114,7 +129,13 @@ class JudgeSpec(JudgeDraft):
     task_id: Text
     input_hash: Text
     model: Literal["gpt-5.4-mini"] = "gpt-5.4-mini"
-    allowed_tools: tuple[JudgeTool, ...] = tuple(JudgeTool)
+    allowed_tools: tuple[JudgeTool, ...] = (
+        JudgeTool.MANIFEST,
+        JudgeTool.SEARCH,
+        JudgeTool.SPAN,
+        JudgeTool.RECORD,
+        JudgeTool.VERIFIER,
+    )
     budget: BudgetCap
     prompt: Text
 
