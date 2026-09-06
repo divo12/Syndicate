@@ -14,6 +14,7 @@ class RuntimeIdentity(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     harbor_version: Literal["0.22.0"] = "0.22.0"
+    e2b_version: Literal["2.26.0"] = "2.26.0"
     nexau_version: Literal["0.3.9"] = "0.3.9"
     nexau_commit: Literal["35ee1861546db3cb280a6e17e38a74060d7c96c3"]
 
@@ -38,6 +39,7 @@ def installed_runtime() -> RuntimeIdentity:
     return RuntimeIdentity.model_validate(
         {
             "harbor_version": version("harbor"),
+            "e2b_version": version("e2b"),
             "nexau_version": version("nexau"),
             "nexau_commit": receipt.vcs_info.commit_id,
         }
