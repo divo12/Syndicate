@@ -2,8 +2,9 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from syndicate.models.envelope import ArtifactKind, ArtifactRef
 from syndicate.models.review import ReceiptSource, ReviewCampaign
 from syndicate.models.selection import ComparisonAssessment
 
@@ -22,6 +23,21 @@ class HeldOutEvaluation(BaseModel):
     status: HeldOutStatus
     task_ids: tuple[str, ...] = Field(min_length=1)
     limitation: str = Field(min_length=1)
+    assessment_ref: ArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def completion_receipt(self) -> "HeldOutEvaluation":
+        if self.status is HeldOutStatus.COMPLETE:
+            if (
+                self.assessment_ref is None
+                or self.assessment_ref.kind is not ArtifactKind.ASSESSMENT
+            ):
+                raise ValueError("Complete held-out evaluation requires assessment ref")
+        elif self.assessment_ref is not None:
+            raise ValueError(
+                "Incomplete held-out evaluation cannot have assessment ref"
+            )
+        return self
 
 
 class ReviewReport(BaseModel):
@@ -33,6 +49,15 @@ class ReviewReport(BaseModel):
     assessment: ComparisonAssessment
     held_out: HeldOutEvaluation
     limitations: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def recorded_completion(self) -> "ReviewReport":
+        if (
+            self.held_out.status is HeldOutStatus.COMPLETE
+            and self.campaign.source is not ReceiptSource.RECORDED
+        ):
+            raise ValueError("Complete held-out evaluation requires recorded campaign")
+        return self
 
     def to_json(self) -> str:
         return self.model_dump_json()
