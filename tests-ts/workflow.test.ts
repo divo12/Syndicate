@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
@@ -17,11 +20,20 @@ const IDS = [
   "66666666-6666-4666-8666-666666666666",
 ] as const;
 
-function invocation(operationId: string): PythonInvocation {
+async function controller(): Promise<string> {
+  const cwd = await mkdtemp(join(tmpdir(), "syndicate-workflow-"));
+  const schemas = join(cwd, ".syndicate", "schemas");
+  await mkdir(schemas, { recursive: true });
+  await writeFile(join(schemas, "command-request-v1.json"), "{}");
+  await writeFile(join(schemas, "command-receipt-v1.json"), "{}");
+  return cwd;
+}
+
+function invocation(controllerCwd: string, operationId: string): PythonInvocation {
   return {
     pythonExecutable: "/pinned/python",
-    controllerCwd: "/controller",
-    requestPath: `/controller/.syndicate/runs/${operationId}/${operationId}/request.json`,
+    controllerCwd,
+    requestPath: `${controllerCwd}/.syndicate/runs/${operationId}/${operationId}/request.json`,
     operationId,
     attemptId: operationId,
     timeoutMs: 1_000,
@@ -42,20 +54,21 @@ function receipt(input: PythonInvocation, status: CommandReceipt["status"]): Tra
   };
 }
 
-function requests() {
+async function requests() {
+  const controllerCwd = await controller();
   return {
-    execute: invocation(IDS[0]),
-    judge: invocation(IDS[1]),
-    collect: invocation(IDS[2]),
-    improve: invocation(IDS[3]),
-    compare: invocation(IDS[4]),
-    select: invocation(IDS[5]),
+    execute: invocation(controllerCwd, IDS[0]),
+    judge: invocation(controllerCwd, IDS[1]),
+    collect: invocation(controllerCwd, IDS[2]),
+    improve: invocation(controllerCwd, IDS[3]),
+    compare: invocation(controllerCwd, IDS[4]),
+    select: invocation(controllerCwd, IDS[5]),
   };
 }
 
 test("composes controller-owned requests in the required order", async () => {
   const calls: string[] = [];
-  const result = await runWorkflow(requests(), async (input) => {
+  const result = await runWorkflow(await requests(), async (input) => {
     calls.push(input.operationId);
     return receipt(input, "completed");
   });
@@ -66,7 +79,7 @@ test("composes controller-owned requests in the required order", async () => {
 test("does not schedule subsequent stages after a failed receipt", async () => {
   const calls: string[] = [];
   await assert.rejects(
-    runWorkflow(requests(), async (input) => {
+    runWorkflow(await requests(), async (input) => {
       calls.push(input.operationId);
       return receipt(input, calls.length === 2 ? "failed" : "completed");
     }),
@@ -78,11 +91,20 @@ test("does not schedule subsequent stages after a failed receipt", async () => {
 test("propagates cancelled receipts without consuming later requests", async () => {
   const calls: string[] = [];
   await assert.rejects(
-    runWorkflow(requests(), async (input) => {
+    runWorkflow(await requests(), async (input) => {
       calls.push(input.operationId);
       return receipt(input, calls.length === 1 ? "cancelled" : "completed");
     }),
     /execute.*cancelled/,
   );
   assert.deepEqual(calls, IDS.slice(0, 1));
+});
+
+test("blocks before dispatch when controller schema artifacts are absent", async () => {
+  const input = await requests();
+  await writeFile(
+    join(input.execute.controllerCwd, ".syndicate", "schemas", "command-request-v1.json"),
+    "not-json",
+  );
+  await assert.rejects(runWorkflow(input), /schema/);
 });
