@@ -1,7 +1,6 @@
 """Harbor-side lifecycle boundary for the unprivileged NexAU process."""
 
 import asyncio
-from pathlib import Path
 
 from harbor.environments.base import BaseEnvironment
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,9 +32,11 @@ class HarborAgent:
         self.cleanup_timeout_ms = cleanup_timeout_ms
 
     async def assert_hidden_files_absent(self) -> None:
-        await self.environment.exec(
+        result = await self.environment.exec(
             command="test ! -e /tests && test ! -e /solution", user=str(self.uid)
         )
+        if result.return_code != 0:
+            raise PermissionError("Hidden verifier paths are visible to the agent")
 
     async def run(self, command: str) -> CleanupReceipt:
         await self.assert_hidden_files_absent()
@@ -65,10 +66,6 @@ class HarborAgent:
         return CleanupReceipt(uid=self.uid, complete=False)
 
 
-def runtime_command(request_path: Path = Path("/run/syndicate/request.json")) -> str:
-    """The fixed container entry point; no host path or shell interpolation."""
-    if not request_path.is_absolute() or " " in str(request_path):
-        raise ValueError(
-            "Runtime request must be an absolute space-free container path"
-        )
+def runtime_command() -> str:
+    """The fixed container entry point; no shell interpolation."""
     return "python -I -m syndicate.nexau_runtime"

@@ -9,8 +9,11 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import MCPServerConfig
+from harbor.models.task.task import Task
+from harbor.models.trial.paths import TrialPaths
 from pydantic import SecretStr
 
+from syndicate.benchmark import VerifierReceipt, verify_with_harbor
 from syndicate.harbor_agent import CleanupReceipt, HarborAgent, runtime_command
 from syndicate.runtime_contracts import RuntimeRequest
 
@@ -79,3 +82,17 @@ class SyndicateNexAUAgent(BaseAgent):
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
         self.cleanup_receipt = await HarborAgent(environment).run(runtime_command())
+
+    async def verify(
+        self,
+        task: Task,
+        paths: TrialPaths,
+        environment: BaseEnvironment,
+        raw_result_ref: str,
+    ) -> VerifierReceipt:
+        """Preserve Harbor's verifier and require this run's cleanup proof."""
+        if self.cleanup_receipt is None:
+            raise RuntimeError("Agent cleanup proof is required before verification")
+        return await verify_with_harbor(
+            task, paths, environment, raw_result_ref, self.cleanup_receipt
+        )

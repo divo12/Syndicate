@@ -18,6 +18,7 @@ from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.baseline import prepare_baseline
+from syndicate.model_config import ModelSettings
 from syndicate.runtime_contracts import (
     RoleDispatchReceipt,
     RoleDispatchRequest,
@@ -50,6 +51,21 @@ class _ToolReply:
     returnDisplay: str
 
 
+def _llm_config(
+    model: ModelSettings, api_key: str, max_output_tokens: int, max_seconds: int
+) -> LLMConfig:
+    return LLMConfig(
+        model=model.deployment,
+        base_url=model.endpoint,
+        api_key=api_key,
+        api_type="openai_responses",
+        max_tokens=max_output_tokens,
+        stream=False,
+        timeout=max_seconds,
+        max_retries=0,
+    )
+
+
 async def dispatch_role(
     request: RoleDispatchRequest, tools: tuple[Tool, ...], client: OpenAI
 ) -> RoleDispatchReceipt:
@@ -69,15 +85,11 @@ async def dispatch_role(
         retry_attempts=1,
         tools=list(tools),
         middlewares=[completion],
-        llm_config=LLMConfig(
-            model=request.model.deployment,
-            base_url=request.model.endpoint,
-            api_key=client.api_key,
-            api_type="openai_responses",
-            max_tokens=request.max_output_tokens,
-            stream=False,
-            timeout=request.budget.max_seconds,
-            max_retries=0,
+        llm_config=_llm_config(
+            request.model,
+            client.api_key,
+            request.max_output_tokens,
+            request.budget.max_seconds,
         ),
     )
     agent = Agent(config=config)
@@ -161,15 +173,11 @@ async def _run(request: RuntimeRequest, key: SecretStr, shell: ShellBinding) -> 
         retry_attempts=1,
         tools=[configured_tool],
         middlewares=[completion],
-        llm_config=LLMConfig(
-            model=model.deployment,
-            base_url=model.endpoint,
-            api_key=key.get_secret_value(),
-            api_type="openai_responses",
-            max_tokens=request.max_output_tokens,
-            stream=False,
-            timeout=request.budget.max_seconds,
-            max_retries=0,
+        llm_config=_llm_config(
+            model,
+            key.get_secret_value(),
+            request.max_output_tokens,
+            request.budget.max_seconds,
         ),
     )
     agent = Agent(config=config)
