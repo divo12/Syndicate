@@ -2,7 +2,7 @@ import asyncio
 from uuid import uuid4
 
 import pytest
-from harbor.models.verifier.result import VerifierResult  # type: ignore[import-untyped]
+from harbor.models.verifier.result import VerifierResult
 
 from syndicate.benchmark import (
     RunOutcome,
