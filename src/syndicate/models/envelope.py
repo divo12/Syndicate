@@ -33,15 +33,15 @@ class Command(WireModel):
     attempt_id: UUID
     operation: Operation
 
-
-class PreflightCommand(Command):
-    operation: Literal[Operation.PREFLIGHT] = Operation.PREFLIGHT
-    manifest_hash: Digest
-
     @property
     def content_hash(self) -> str:
         """Hash the canonical typed request, independent of JSON whitespace."""
         return hashlib.sha256(self.model_dump_json().encode()).hexdigest()
+
+
+class PreflightCommand(Command):
+    operation: Literal[Operation.PREFLIGHT] = Operation.PREFLIGHT
+    manifest_hash: Digest
 
 
 class CommandStatus(StrEnum):
@@ -62,8 +62,17 @@ class CommandError(WireModel):
     message: str
 
 
+class ArtifactKind(StrEnum):
+    PREFLIGHT = "preflight"
+    RUN = "run"
+    REPORT = "report"
+    DIAGNOSIS = "diagnosis"
+    SCHEDULE = "schedule"
+    COMPARISON = "comparison"
+
+
 class ArtifactRef(WireModel):
-    kind: Literal["preflight"] = "preflight"
+    kind: ArtifactKind = ArtifactKind.PREFLIGHT
     operation_id: UUID
     attempt_id: UUID
     sha256: Digest

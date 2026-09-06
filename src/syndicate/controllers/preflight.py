@@ -6,8 +6,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from syndicate.models.commands import CommandRequest, parse_command
 from syndicate.models.envelope import (
     ArtifactRef,
+    Command,
     CommandError,
     CommandReceipt,
     CommandStatus,
@@ -21,6 +23,7 @@ from syndicate.services.preflight import (
     preflight,
     prepare_preflight,
 )
+from syndicate.services.schema_export import export_schemas
 
 
 def contained(path: Path, root: Path) -> Path:
@@ -31,19 +34,38 @@ def contained(path: Path, root: Path) -> Path:
     return path
 
 
-def read_request(arguments: list[str], root: Path) -> tuple[PreflightCommand, Path]:
+def read_request(arguments: list[str], root: Path) -> tuple[CommandRequest, Path]:
     if len(arguments) != 3 or arguments[:2] != ["execute", "--request"]:
         raise ValueError("Invalid invocation")
     path = contained(Path(arguments[2]), root / "runs")
-    command = PreflightCommand.model_validate_json(path.read_bytes())
+    command = parse_command(path.read_bytes())
     expected = root / "runs" / str(command.operation_id) / str(command.attempt_id)
     if path != expected / "request.json":
         raise ValueError("Request IDs do not match controller path")
     return command, expected
 
 
+def request_path(root: Path, command: Command) -> Path:
+    contained(root, root)
+    return (
+        root
+        / "runs"
+        / str(command.operation_id)
+        / str(command.attempt_id)
+        / "request.json"
+    )
+
+
+def write_request(root: Path, command: Command) -> Path:
+    path = request_path(root, command)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as request:
+        request.write(command.model_dump_json())
+    return path
+
+
 def failure(
-    status: CommandStatus, reason: ErrorReason, command: PreflightCommand | None
+    status: CommandStatus, reason: ErrorReason, command: Command | None
 ) -> CommandReceipt:
     return CommandReceipt(
         operation_id=command.operation_id if command else None,
@@ -122,6 +144,8 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     except (OSError, ValueError):
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, None), 2
     try:
+        if not isinstance(command, PreflightCommand):
+            raise ValueError("Command handler is not installed")
         return execute(command, run, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2
@@ -137,6 +161,10 @@ def main(arguments: list[str]) -> int:
     if arguments == ["--help"]:
         print("Usage: python -m syndicate.cli preflight --config CAMPAIGN_JSON")
         print("Internal transport: execute --request ABSOLUTE_REQUEST_JSON")
+        return 0
+    if arguments == ["export-schema"]:
+        root = Path.cwd().resolve() / ".syndicate"
+        print(export_schemas(root).model_dump_json())
         return 0
     receipt, exit_code = dispatch(arguments)
     if receipt.error:
