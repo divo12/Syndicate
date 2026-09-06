@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, call, create_autospec, patch
+from uuid import uuid4
 
 from harbor.agents.factory import AgentFactory
 from harbor.environments.base import BaseEnvironment, ExecResult
@@ -143,3 +144,52 @@ def test_native_verifier_refuses_to_call_harbor_without_cleanup_proof(
 
     assert result.rewards is None
     verify.assert_not_awaited()
+
+
+def test_native_verifier_accepts_the_agent_environment_cleanup_proof(
+    tmp_path: Path,
+) -> None:
+    context_id = uuid4()
+    agent_environment = create_autospec(BaseEnvironment, instance=True)
+    agent_environment.context_id = context_id
+    agent_environment.exec = AsyncMock(
+        side_effect=(
+            ExecResult(return_code=0),
+            ExecResult(return_code=0),
+            ExecResult(return_code=0),
+            ExecResult(return_code=1),
+            ExecResult(return_code=1),
+        )
+    )
+    verifier_environment = create_autospec(BaseEnvironment, instance=True)
+    verifier_environment.context_id = context_id
+    agent = SyndicateNexAUAgent(
+        logs_dir=tmp_path, request=request(), api_key=SecretStr("fixture")
+    )
+    verifier = SyndicateHarborVerifier(
+        task=create_autospec(object),
+        trial_paths=create_autospec(object),
+        environment=verifier_environment,
+    )
+    expected = VerifierReceipt(
+        outcome=RunOutcome.FAIL,
+        reason=VerifierReason.FAILED,
+        reward=0.0,
+        raw_result_ref="harbor:opaque",
+    )
+
+    async def exercise() -> None:
+        await agent.run(
+            agent.request.instruction, agent_environment, create_autospec(object)
+        )
+        with patch(
+            "syndicate.harbor_adapter.verify_with_harbor",
+            AsyncMock(return_value=expected),
+        ) as verify:
+            result = await verifier.verify()
+        verify.assert_awaited_once()
+        assert verify.await_args is not None
+        assert verify.await_args.args[-1] == agent.cleanup_receipt
+        assert result.rewards == {"reward": 0.0}
+
+    asyncio.run(exercise())

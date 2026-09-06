@@ -4,7 +4,7 @@ import tempfile
 from logging import Logger
 from pathlib import Path, PurePosixPath
 from typing import override
-from weakref import WeakKeyDictionary
+from uuid import UUID
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
@@ -27,15 +27,25 @@ HARNESS_SOURCE = Path(__file__).parents[2] / "harnesses/seed"
 class _CleanupProofs:
     """Transient handoff between Harbor's sequential agent and verifier phases."""
 
-    _receipts: WeakKeyDictionary[BaseEnvironment, CleanupReceipt] = WeakKeyDictionary()
+    _receipts: list[tuple[UUID, CleanupReceipt]] = []
 
     @classmethod
     def record(cls, environment: BaseEnvironment, receipt: CleanupReceipt) -> None:
-        cls._receipts[environment] = receipt
+        context_id = environment.context_id
+        if context_id is None:
+            raise RuntimeError("Harbor trial context is required for verification")
+        cls._receipts[:] = [item for item in cls._receipts if item[0] != context_id]
+        cls._receipts.append((context_id, receipt))
 
     @classmethod
     def take(cls, environment: BaseEnvironment) -> CleanupReceipt | None:
-        return cls._receipts.pop(environment, None)
+        context_id = environment.context_id
+        if context_id is None:
+            return None
+        for index, item in enumerate(cls._receipts):
+            if item[0] == context_id:
+                return cls._receipts.pop(index)[1]
+        return None
 
 
 class SyndicateNexAUAgent(BaseAgent):
