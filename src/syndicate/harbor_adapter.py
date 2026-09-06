@@ -113,7 +113,9 @@ class SyndicateNexAUAgent(BaseAgent):
         ).run(self.request, self.api_key)
         if self._controller_binding is not None and self._controller_root is not None:
             emit_cleanup_receipt(
-                self._controller_binding, self.cleanup_receipt, self._controller_root,
+                self._controller_binding,
+                self.cleanup_receipt,
+                self._controller_root,
                 datetime.now(UTC),
             )
 

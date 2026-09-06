@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, create_autospec, patch
+from uuid import uuid4
 
 import pytest
 from e2b import AsyncSandbox
@@ -14,6 +15,7 @@ from test_runtime_request import request
 
 from syndicate.harbor_adapter import SyndicateNexAUAgent
 from syndicate.harbor_agent import CleanupReceipt
+from syndicate.stock_receipt import ControllerTrialBinding, load_cleanup_receipt
 
 
 def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
@@ -96,3 +98,34 @@ def test_requires_started_e2b_environment(tmp_path: Path, started: bool) -> None
     agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
     with pytest.raises((ValueError, RuntimeError)):
         asyncio.run(agent.setup(environment))
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_stock_receipt_requires_successful_controller_run(
+    tmp_path: Path, failed: bool
+) -> None:
+    environment = create_autospec(E2BEnvironment, instance=True)
+    environment._sandbox = create_autospec(AsyncSandbox, instance=True)
+    agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
+    binding = ControllerTrialBinding(
+        operation_id=uuid4(),
+        attempt_id=uuid4(),
+        run_id=uuid4(),
+        task_id="task-a-1",
+    )
+    agent.bind_controller_receipt(binding, tmp_path)
+    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+        lifecycle.return_value.run = AsyncMock(
+            return_value=CleanupReceipt(complete=True),
+            side_effect=RuntimeError("controller failed") if failed else None,
+        )
+        execution = agent.run(agent.request.instruction, environment, AgentContext())
+        if failed:
+            with pytest.raises(RuntimeError, match="controller failed"):
+                asyncio.run(execution)
+            assert not tuple(tmp_path.rglob("cleanup.json"))
+        else:
+            asyncio.run(execution)
+            receipt = load_cleanup_receipt(binding, tmp_path)
+            assert receipt.cleanup == agent.cleanup_receipt
+            assert receipt.written_at.utcoffset() is not None
