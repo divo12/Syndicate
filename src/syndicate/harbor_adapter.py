@@ -89,9 +89,7 @@ class SyndicateNexAUAgent(BaseAgent):
             await environment.upload_file(request_path, REQUEST_PATH)
             await environment.upload_file(key_path, KEY_PATH)
         await environment.exec(
-            command=(
-                f"chown -R 10001:10001 /run/syndicate && chmod 600 {KEY_PATH}"
-            ),
+            command=(f"chown -R 10001:10001 /run/syndicate && chmod 600 {KEY_PATH}"),
             user="root",
         )
 
