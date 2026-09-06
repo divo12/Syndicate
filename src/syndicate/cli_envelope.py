@@ -157,6 +157,14 @@ class CommandReceipt(WireModel):
     error: CommandError | None = None
 
 
+class SchemaExportReceipt(WireModel):
+    schema_version: Literal[1] = 1
+    command_schema_path: str
+    command_schema_sha256: Digest
+    receipt_schema_path: str
+    receipt_schema_sha256: Digest
+
+
 def command_schema_json() -> str:
     return json.dumps(
         _COMMAND_ADAPTER.json_schema(), sort_keys=True, separators=(",", ":")
@@ -190,3 +198,17 @@ def write_schemas(root: Path) -> tuple[Path, Path]:
         if not path.exists():
             path.write_text(payload, encoding="utf-8")
     return paths
+
+
+def export_schemas(root: Path) -> SchemaExportReceipt:
+    paths = write_schemas(root)
+    command_payload, receipt_payload = (
+        paths[0].read_bytes(),
+        paths[1].read_bytes(),
+    )
+    return SchemaExportReceipt(
+        command_schema_path=str(paths[0]),
+        command_schema_sha256=hashlib.sha256(command_payload).hexdigest(),
+        receipt_schema_path=str(paths[1]),
+        receipt_schema_sha256=hashlib.sha256(receipt_payload).hexdigest(),
+    )
