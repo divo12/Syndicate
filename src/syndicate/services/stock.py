@@ -1,8 +1,7 @@
 """Controller-owned Harbor cleanup proofs; never a public agent-facing writer."""
 
-import hmac
+import hashlib
 import os
-import secrets
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -17,7 +16,7 @@ from syndicate.services.benchmark import RunReceipt, classify_verifier
 AGENT_NAME = "syndicate-nexau"
 AGENT_IMPORT = "syndicate.adapters.harbor_adapter.SyndicateNexAUAgent"
 CONTROLLER_UID = 10001
-_CONTROLLER_SEAL_KEY = secrets.token_bytes(32)
+_ISSUED_RECEIPTS: set[str] = set()
 
 
 class ControllerTrialBinding(WireModel):
@@ -55,7 +54,6 @@ class CleanupControlReceipt(ControllerTrialBinding):
     agent_name: str
     uid: int
     written_at: AwareDatetime
-    controller_seal: str = ""
 
 
 def _controller_authority(
@@ -79,9 +77,7 @@ def _write_settled_cleanup(
         uid=cleanup.uid,
         written_at=written_at,
     )
-    receipt = provisional.model_copy(
-        update={"controller_seal": _cleanup_seal(provisional)}
-    )
+    receipt = provisional
     parent = _receipt_parent(authority.binding, authority.root)
     temporary = ".cleanup-" + uuid4().hex
     temporary_fd = os.open(
@@ -104,6 +100,7 @@ def _write_settled_cleanup(
         )
         os.unlink(temporary, dir_fd=parent)
         os.fsync(parent)
+        _ISSUED_RECEIPTS.add(_receipt_digest(receipt))
     except BaseException:
         try:
             os.unlink(temporary, dir_fd=parent)
@@ -193,13 +190,12 @@ def _authentic(receipt: CleanupControlReceipt) -> bool:
         and receipt.uid == CONTROLLER_UID
         and receipt.agent_import == AGENT_IMPORT
         and receipt.agent_name == AGENT_NAME
-        and hmac.compare_digest(receipt.controller_seal, _cleanup_seal(receipt))
+        and _receipt_digest(receipt) in _ISSUED_RECEIPTS
     )
 
 
-def _cleanup_seal(receipt: CleanupControlReceipt) -> str:
-    content = receipt.model_dump_json(exclude={"controller_seal"}).encode()
-    return hmac.digest(_CONTROLLER_SEAL_KEY, content, "sha256").hex()
+def _receipt_digest(receipt: CleanupControlReceipt) -> str:
+    return hashlib.sha256(receipt.model_dump_json().encode()).hexdigest()
 
 
 def _timing(

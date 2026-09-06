@@ -24,7 +24,8 @@ Neatlogs instrumentation remains on the controller. This adapter uploads no
 credentials, runtime files, or harness payloads into the benchmark environment.
 
 Cleanup proof issuance is internal to the bound adapter after its awaited
-`HarborAgent.run()` return. The controller keeps the seal key in process memory;
-the contained nofollow receipt path and seal bind operation, attempt, run, task,
-environment context, agent import/name, UID, and aware issuance time. A receipt
-from another process, context, path, adapter, or timing interval fails closed.
+`HarborAgent.run()` return. The controller remembers only digests it issued in
+this process; the contained nofollow receipt path binds operation, attempt, run,
+task, environment context, agent import/name, UID, and aware issuance time. A
+receipt from another process, context, path, adapter, or timing interval fails
+closed.

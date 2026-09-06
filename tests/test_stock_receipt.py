@@ -89,8 +89,10 @@ def test_fabricated_or_tampered_receipt_fails_closed(tmp_path: Path) -> None:
     identity = binding()
     authority(identity, tmp_path).issue(ENDED)
     path = next(tmp_path.rglob("cleanup.json"))
-    forged = path.read_text(encoding="utf-8").replace("10001", "10002")
-    path.write_text(forged, encoding="utf-8")
+    forged = load_cleanup_receipt(identity, tmp_path).model_copy(
+        update={"written_at": ENDED - timedelta(seconds=1)}
+    )
+    path.write_text(forged.model_dump_json(), encoding="utf-8")
     with pytest.raises(ValueError):
         load_cleanup_receipt(identity, tmp_path)
 
