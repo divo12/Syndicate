@@ -145,7 +145,11 @@ async function execute(input: PythonInvocation): Promise<{
     const deadline = setTimeout(() => end("SIGTERM"), input.timeoutMs);
     const force = setTimeout(() => end("SIGKILL"), input.timeoutMs + GRACE_MS);
     const abort = (): void => end("SIGTERM");
-    input.signal?.addEventListener("abort", abort, { once: true });
+    if (input.signal?.aborted) {
+      abort();
+    } else {
+      input.signal?.addEventListener("abort", abort, { once: true });
+    }
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
