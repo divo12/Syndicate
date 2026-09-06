@@ -5,7 +5,7 @@ from html import escape
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.evidence_contracts import SpanCitation
+from syndicate.evidence_contracts import RecordCitation, SpanCitation
 from syndicate.improvement_contracts import HarnessChangeManifest
 from syndicate.judge_contracts import TaskReport
 
@@ -37,8 +37,13 @@ class ReviewCampaign(BaseModel):
         return self
 
 
-def _citation(citation: SpanCitation) -> str:
-    return escape(f"{citation.trace_ref}/{citation.span_ref}")
+def _citation(citation: SpanCitation | RecordCitation) -> str:
+    reference = (
+        f"{citation.trace_ref}/{citation.span_ref}"
+        if isinstance(citation, SpanCitation)
+        else citation.record_ref
+    )
+    return escape(reference)
 
 
 def _finding_rows(report: TaskReport) -> str:
@@ -47,7 +52,7 @@ def _finding_rows(report: TaskReport) -> str:
         references = ", ".join(
             _citation(citation)
             for citation in finding.evidence
-            if isinstance(citation, SpanCitation)
+            if isinstance(citation, SpanCitation | RecordCitation)
         )
         rows.append(
             "<li><strong>"
