@@ -101,6 +101,20 @@ def test_coverage_and_link_mismatch_are_incomplete() -> None:
     assert not Reader(context(value.link)).fetch(changed).complete
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda raw: raw.replace(
+            '"parent_span_id":"root"', '"parent_span_id":"missing"'
+        ),
+        lambda raw: raw.replace('"parent_span_id":"root",', ""),
+    ],
+)
+def test_malformed_span_tree_is_incomplete(mutation: Callable[[str], str]) -> None:
+    value = expected()
+    assert not Reader(mutation(context(value.link))).fetch(value).complete
+
+
 def test_duplicate_expected_span_ids_are_rejected() -> None:
     value = expected()
     with pytest.raises(ValidationError):
