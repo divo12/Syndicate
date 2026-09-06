@@ -2,14 +2,19 @@
 
 from html import escape
 
-from syndicate.models.evidence import SpanCitation
+from syndicate.models.evidence import RecordCitation, SpanCitation
 from syndicate.models.improvement import HarnessChangeManifest
 from syndicate.models.judging import TaskReport
 from syndicate.models.review import ReceiptSource, ReviewCampaign
 
 
-def _citation(citation: SpanCitation) -> str:
-    return escape(f"{citation.trace_ref}/{citation.span_ref}")
+def _citation(citation: SpanCitation | RecordCitation) -> str:
+    reference = (
+        f"{citation.trace_ref}/{citation.span_ref}"
+        if isinstance(citation, SpanCitation)
+        else citation.record_ref
+    )
+    return escape(reference)
 
 
 def _finding_rows(report: TaskReport) -> str:
@@ -18,7 +23,7 @@ def _finding_rows(report: TaskReport) -> str:
         references = ", ".join(
             _citation(citation)
             for citation in finding.evidence
-            if isinstance(citation, SpanCitation)
+            if isinstance(citation, SpanCitation | RecordCitation)
         )
         rows.append(
             "<li><strong>"
