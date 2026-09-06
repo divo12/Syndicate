@@ -31,7 +31,7 @@ def test_service_layer_exports_use_cases() -> None:
     benchmark = import_module("syndicate.services.benchmark")
     assert callable(preflight.preflight)
     assert callable(runtime.run_on_controller)
-    assert callable(stock.emit_cleanup_receipt)
+    assert not hasattr(stock, "emit_cleanup_receipt")
     assert callable(benchmark.verify_with_harbor)
 
 

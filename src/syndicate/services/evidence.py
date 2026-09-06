@@ -97,20 +97,22 @@ class EvidenceReader:
         if grant is None:
             return EvidenceStatus.FORBIDDEN, None
         try:
-            receipt = self.remote.fetch(
-                ExpectedTrace(
-                    link=grant.link,
-                    trace_ref=trace_ref,
-                    expected_span_refs=grant.expected_span_refs,
-                )
-            )
+            receipt = self.remote.fetch(ExpectedTrace(receipt=grant.receipt))
         except (OSError, ValueError):
             return EvidenceStatus.INCOMPLETE, None
-        if (receipt.link, receipt.trace_ref, receipt.semantic_digest) != (
+        actual = (
+            receipt.link,
+            receipt.trace_ref,
+            receipt.semantic_digest,
+            receipt.binding_digest,
+        )
+        expected = (
             grant.link,
             grant.trace_ref,
             grant.semantic_digest,
-        ):
+            grant.receipt.binding_digest,
+        )
+        if actual != expected:
             return EvidenceStatus.MISALIGNED, None
         if not sufficient(receipt):
             return EvidenceStatus.INCOMPLETE, None

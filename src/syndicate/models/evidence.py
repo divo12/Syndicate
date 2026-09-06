@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from syndicate.observability.neatlogs_capture import RunLink
+from syndicate.observability.neatlogs_capture import CaptureReceipt, RunLink
 
 
 class EvidenceModel(BaseModel):
@@ -39,10 +39,21 @@ class EvidenceStatus(StrEnum):
 
 
 class EvidenceGrant(EvidenceModel):
-    link: RunLink
-    trace_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
-    expected_span_refs: tuple[str, ...] = Field(min_length=1)
+    receipt: CaptureReceipt
     semantic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @property
+    def link(self) -> RunLink:
+        return self.receipt.link
+
+    @property
+    def trace_ref(self) -> str:
+        assert self.receipt.trace_ref is not None
+        return self.receipt.trace_ref
+
+    @property
+    def expected_span_refs(self) -> tuple[str, ...]:
+        return self.receipt.expected_span_refs
 
 
 class RunEvidenceGrant(EvidenceModel):

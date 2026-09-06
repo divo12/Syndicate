@@ -6,7 +6,11 @@ from uuid import UUID
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from syndicate.observability.neatlogs_capture import RunLink
+from syndicate.observability.neatlogs_capture import (
+    CaptureReceipt,
+    CaptureState,
+    RunLink,
+)
 from syndicate.observability.neatlogs_readback import (
     ExpectedTrace,
     NeatlogsReadbackReader,
@@ -23,15 +27,23 @@ class Reader(NeatlogsReadbackReader):
 
 
 def expected() -> ExpectedTrace:
+    link = RunLink(
+        operation_id=UUID(int=1),
+        attempt_id=UUID(int=2),
+        run_id=UUID(int=3),
+        task_id="task",
+    )
+    trace_ref = "a" * 32
+    spans = ("root", "child")
     return ExpectedTrace(
-        link=RunLink(
-            operation_id=UUID(int=1),
-            attempt_id=UUID(int=2),
-            run_id=UUID(int=3),
-            task_id="task",
-        ),
-        trace_ref="trace",
-        expected_span_refs=("root", "child"),
+        receipt=CaptureReceipt(
+            link=link,
+            state=CaptureState.FLUSHED_UNVERIFIED,
+            reason="sealed",
+            trace_ref=trace_ref,
+            expected_span_refs=spans,
+            binding_digest=CaptureReceipt.digest(link, trace_ref, spans),
+        )
     )
 
 
@@ -47,7 +59,9 @@ def context(
 ) -> str:
     metadata = link.model_dump_json() if link is not None else "null"
     return (
-        '{"trace_id":"trace","status":"success","finalization_status":"'
+        '{"trace_id":"'
+        + "a" * 32
+        + '","status":"success","finalization_status":"'
         + finalization
         + '","verification_ready":'
         + str(ready).lower()
@@ -82,7 +96,6 @@ def test_known_finalized_v2_context_is_complete() -> None:
         lambda link: context(link, tree=False),
         lambda link: context(link, truncated=True),
         lambda link: context(link, count=1),
-        lambda link: context(None),
     ],
 )
 def test_finality_and_linkage_gaps_are_incomplete(
@@ -93,12 +106,13 @@ def test_finality_and_linkage_gaps_are_incomplete(
     assert not receipt.complete
 
 
-def test_coverage_and_link_mismatch_are_incomplete() -> None:
+def test_coverage_mismatch_is_incomplete() -> None:
     value = expected()
-    wrong = value.link.model_copy(update={"attempt_id": UUID(int=9)})
-    assert not Reader(context(wrong)).fetch(value).complete
-    changed = value.model_copy(update={"expected_span_refs": ("root",)})
-    assert not Reader(context(value.link)).fetch(changed).complete
+    changed = value.receipt.model_copy(
+        update={"expected_span_refs": ("root", "root")}
+    )
+    with pytest.raises(ValidationError):
+        ExpectedTrace(receipt=changed)
 
 
 @pytest.mark.parametrize(
@@ -119,9 +133,9 @@ def test_duplicate_expected_span_ids_are_rejected() -> None:
     value = expected()
     with pytest.raises(ValidationError):
         ExpectedTrace(
-            link=value.link,
-            trace_ref=value.trace_ref,
-            expected_span_refs=("root", "root"),
+            receipt=value.receipt.model_copy(
+                update={"expected_span_refs": ("root", "root")}
+            )
         )
 
 
