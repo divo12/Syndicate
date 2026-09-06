@@ -4,7 +4,6 @@ import sys
 from importlib.metadata import distribution, version
 from typing import Literal, Self
 
-from nexau.archs.main_sub.execution.stop_reason import AgentStopReason
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from syndicate.baseline import BaselineManifest
@@ -71,10 +70,3 @@ class RuntimeRequest(BaseModel):
         if self.shell_timeout_ms > self.budget.max_seconds * 1000:
             raise ValueError("Shell timeout exceeds dispatch deadline")
         return self
-
-
-class RuntimeExit(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    stop_reason: AgentStopReason | None
-    final_response: str | None
