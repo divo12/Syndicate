@@ -34,6 +34,15 @@ class CaptureReceipt(BaseModel):
     expected_span_refs: tuple[str, ...] = ()
 
 
+class RedactedEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    provider_input: str = Field(min_length=1)
+    provider_output: str = Field(min_length=1)
+    model_input: str = Field(min_length=1)
+    model_output: str = Field(min_length=1)
+
+
 class SpanContext(Protocol):
     trace_id: int
     span_id: int
@@ -41,6 +50,8 @@ class SpanContext(Protocol):
 
 class SdkSpan(Protocol):
     def get_span_context(self) -> SpanContext: ...
+
+    def set_attribute(self, key: str, value: str | bool) -> None: ...
 
 
 class CaptureSdk(Protocol):
@@ -96,17 +107,22 @@ class NeatlogsCapture:
             workflow_name=self.workflow_name, register_shutdown_handlers=False
         )
 
-    def span(self, link: RunLink, name: str) -> AbstractContextManager[SdkSpan]:
-        return _TrackedSpan(
-            self._sdk.trace(
-                name,
-                kind="TOOL",
-                operation_id=str(link.operation_id),
-                attempt_id=str(link.attempt_id),
-                run_id=str(link.run_id),
-                task_id=link.task_id,
+    def span(
+        self, link: RunLink, name: str, evidence: RedactedEvidence
+    ) -> AbstractContextManager[SdkSpan]:
+        return _RedactedSpan(
+            _TrackedSpan(
+                self._sdk.trace(
+                    name,
+                    kind="TOOL",
+                    operation_id=str(link.operation_id),
+                    attempt_id=str(link.attempt_id),
+                    run_id=str(link.run_id),
+                    task_id=link.task_id,
+                ),
+                self,
             ),
-            self,
+            evidence,
         )
 
     def flush(self, link: RunLink) -> CaptureReceipt:
@@ -145,3 +161,30 @@ class NeatlogsCapture:
         if value <= 0 or value >= 16**width:
             return None
         return f"{value:0{width}x}"
+
+
+class _RedactedSpan(AbstractContextManager[SdkSpan]):
+    def __init__(
+        self,
+        context: AbstractContextManager[SdkSpan, bool | None],
+        evidence: RedactedEvidence,
+    ) -> None:
+        self._context = context
+        self._evidence = evidence
+
+    def __enter__(self) -> SdkSpan:
+        span = self._context.__enter__()
+        span.set_attribute("input.value", self._evidence.model_input)
+        span.set_attribute("output.value", self._evidence.model_output)
+        span.set_attribute("neatlogs.provider.input", self._evidence.provider_input)
+        span.set_attribute("neatlogs.provider.output", self._evidence.provider_output)
+        span.set_attribute("neatlogs.evidence.redacted", True)
+        return span
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        return self._context.__exit__(exception_type, exception, traceback)
