@@ -83,6 +83,13 @@ class TaskResult(JobObject):
     outcome: TaskOutcome
     reward: float = Field(ge=0, le=1)
 
+    @model_validator(mode="after")
+    def reward_matches_outcome(self) -> Self:
+        expected = 1.0 if self.outcome is TaskOutcome.PASSED else 0.0
+        if self.reward != expected:
+            raise ValueError("reward must be 1.0 for passed and 0.0 otherwise")
+        return self
+
 
 class Iteration(JobObject):
     job_id: UUID

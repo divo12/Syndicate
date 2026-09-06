@@ -9,7 +9,12 @@ import {
   type TaskResult,
   type TrialBatch,
 } from "../src/trigger/loop.js";
-import { executeTrial, simulateTrial } from "../src/trigger/trial.js";
+import {
+  executeTrial,
+  parseTrial,
+  runProcess,
+  simulateTrial,
+} from "../src/trigger/trial.js";
 import { learningLoop, runTrial } from "../src/trigger/learning.js";
 
 const TASKS = ["regex-log", "extract-elf", "log-summary-date-ranges"] as const;
@@ -100,11 +105,64 @@ test("fans one or many tasks through one batch per iteration", async () => {
 });
 
 test("accepts a candidate only when the score strictly improves", async () => {
-  const receipt = await runLearningLoop(payload(), simulatedPorts());
+  const receipt = await runLearningLoop(
+    payload({ maxIterations: 3, patience: 2 }),
+    {
+      async runTasks(batch) {
+        if (batch.generation === 0) {
+          return batch.taskIds.map((taskId, index) =>
+            result(taskId, index !== batch.taskIds.length - 1),
+          );
+        }
+        return batch.taskIds.map((taskId) => result(taskId, false));
+      },
+      async improve(generation) {
+        return generation + 1;
+      },
+    },
+  );
   assert.equal(receipt.iterations[0]?.accepted, true);
-  assert.equal(receipt.iterations[0]?.score, 2 / 3);
-  assert.equal(receipt.iterations[1]?.accepted, true);
-  assert.equal(receipt.iterations[1]?.score, 1);
+  assert.equal(receipt.iterations[1]?.accepted, false);
+  assert.equal(receipt.stop_reason, "no_improvement");
+});
+
+test("rejects unbounded iteration and patience", async () => {
+  const ports = simulatedPorts();
+  await assert.rejects(
+    runLearningLoop(payload({ maxIterations: 51 }), ports),
+    /maxIterations/,
+  );
+  await assert.rejects(
+    runLearningLoop(payload({ patience: 21 }), ports),
+    /patience/,
+  );
+});
+
+test("cancel after runTasks does not complete or improve", async () => {
+  let improved = false;
+  let started = false;
+  const receipt = await runLearningLoop(payload(), {
+    async runTasks(batch) {
+      started = true;
+      return batch.taskIds.map((taskId) => result(taskId, true));
+    },
+    async improve(generation) {
+      improved = true;
+      return generation + 1;
+    },
+    isCancelled() {
+      return started;
+    },
+  });
+  assert.equal(receipt.stop_reason, "cancelled");
+  assert.equal(improved, false);
+});
+
+test("parseTrial rejects rewards outside 0..1", () => {
+  assert.throws(
+    () => parseTrial('{"task_id":"regex-log","outcome":"passed","reward":2}'),
+    /Invalid trial receipt/,
+  );
 });
 
 test("stops after patience non-improving iterations", async () => {
@@ -166,10 +224,27 @@ test("does not start another iteration after cancel", async () => {
 });
 
 test("executeTrial uses the in-process simulator without SYNDICATE_PYTHON", async () => {
-  const result = await executeTrial({
-    taskId: "regex-log",
-    generation: 0,
-    failingTaskId: "regex-log",
-  });
-  assert.equal(result.outcome, "failed");
+  const previous = process.env.SYNDICATE_PYTHON;
+  delete process.env.SYNDICATE_PYTHON;
+  try {
+    const outcome = await executeTrial({
+      taskId: "regex-log",
+      generation: 0,
+      failingTaskId: "regex-log",
+    });
+    assert.equal(outcome.outcome, "failed");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.SYNDICATE_PYTHON;
+    } else {
+      process.env.SYNDICATE_PYTHON = previous;
+    }
+  }
+});
+
+test("runProcess kills a hanging child at its deadline", async () => {
+  await assert.rejects(
+    runProcess(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], 50),
+    /timed out/,
+  );
 });

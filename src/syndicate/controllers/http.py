@@ -34,7 +34,7 @@ def create_app(store: JobStore, worker: JobWorker | None = None) -> FastAPI:
 
         async def ticks() -> None:
             while not stopped.is_set():
-                worker.process_one()
+                await asyncio.to_thread(worker.process_one)
                 await asyncio.sleep(0.5)
 
         task = asyncio.create_task(ticks())

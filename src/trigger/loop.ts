@@ -68,10 +68,14 @@ function bounded(payload: LoopPayload): LoopPayload {
   if (
     !Number.isSafeInteger(payload.maxIterations) ||
     payload.maxIterations < 1 ||
+    payload.maxIterations > 50 ||
     !Number.isSafeInteger(payload.patience) ||
-    payload.patience < 1
+    payload.patience < 1 ||
+    payload.patience > 20
   ) {
-    throw new LearningLoopError("maxIterations and patience must be positive integers");
+    throw new LearningLoopError(
+      "maxIterations and patience must be within 1..50 and 1..20",
+    );
   }
   return { ...payload, taskIds };
 }
@@ -128,6 +132,9 @@ export async function runLearningLoop(
       taskIds: payload.taskIds,
       generation,
     });
+    if (ports.isCancelled?.()) {
+      return finish(payload, iterations, best, "cancelled", ports, generation);
+    }
     const score = scoreOf(results, payload.taskIds);
     const accepted = score > best;
     if (accepted) {
@@ -150,6 +157,9 @@ export async function runLearningLoop(
       return finish(payload, iterations, best, stop, ports, generation);
     }
     generation = await ports.improve(generation);
+    if (ports.isCancelled?.()) {
+      return finish(payload, iterations, best, "cancelled", ports, generation);
+    }
   }
   return finish(payload, iterations, best, "max_iterations", ports, generation);
 }

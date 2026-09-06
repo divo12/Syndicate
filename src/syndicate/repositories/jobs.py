@@ -200,6 +200,8 @@ class MemoryJobStore:
         job = self._jobs.get(job_id)
         if job is None:
             return None
+        if job.status is not JobStatus.RUNNING:
+            return job
         updated = job.model_copy(
             update={
                 "status": status,
@@ -348,7 +350,7 @@ class PostgresJobStore:
         with psycopg.connect(self._url) as connection:
             connection.execute(
                 """UPDATE jobs SET status = %s, stop_reason = %s, best_score = %s,
-                error = %s, updated_at = %s WHERE id = %s""",
+                error = %s, updated_at = %s WHERE id = %s AND status = %s""",
                 (
                     status.value,
                     stop_reason.value,
@@ -356,6 +358,7 @@ class PostgresJobStore:
                     error,
                     _now().isoformat(),
                     str(job_id),
+                    JobStatus.RUNNING.value,
                 ),
             )
             connection.commit()

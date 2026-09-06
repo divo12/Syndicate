@@ -16,12 +16,16 @@ export const runTrial = task({
   run: async (payload: TrialPayload): Promise<TaskResult> => executeTrial(payload),
 });
 
+/** Simulated generation bump. Python JobWorker owns assess/lineage. */
 export const improveHarness = task({
   id: "improve-harness",
   retry: { maxAttempts: 1 },
   run: async (payload: {
     generation: number;
-  }): Promise<{ generation: number }> => ({ generation: payload.generation + 1 }),
+  }): Promise<{ generation: number; simulated: true }> => ({
+    generation: payload.generation + 1,
+    simulated: true,
+  }),
 });
 
 function requireOutput<T>(result: RunResult<T>, stage: string): T {

@@ -14,7 +14,13 @@ from syndicate.models.improvement import (
     ProposalEdit,
     ProposalRequest,
 )
-from syndicate.models.jobs import Job, JobSubmission, StopReason
+from syndicate.models.jobs import (
+    Job,
+    JobSubmission,
+    StopReason,
+    TaskOutcome,
+    TaskResult,
+)
 from syndicate.models.judging import (
     Finding,
     FindingCategory,
@@ -66,6 +72,34 @@ def test_outer_loop_uses_assess_comparison_and_lineage(tmp_path: Path) -> None:
     candidate = SimulatedExecutor().run(job.task_ids, 1)
     assert _select(incumbent, candidate, job, lineage, 0, 1) is True
     assert lineage.current().harness_hash == f"sha256:{1:064x}"
+
+
+def test_infra_error_is_not_a_verified_failure() -> None:
+    store = MemoryJobStore()
+    job = store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2))
+    infra = (
+        TaskResult(task_id="regex-log", outcome=TaskOutcome.INFRA_ERROR, reward=0.0),
+    )
+    assert _select(infra, infra, job, None, 0, 1) is False
+
+
+def test_rejected_generation_is_not_used_as_incumbent(tmp_path: Path) -> None:
+    digest = f"sha256:{0:064x}"
+    lineage = HarnessLineage(tmp_path / "lineage.sqlite", digest, digest)
+    store = MemoryJobStore()
+    job = store.create(
+        JobSubmission(
+            task_ids=("regex-log", "extract-elf"), max_iterations=4, patience=3
+        )
+    )
+
+    def executor(task_ids: tuple[str, ...], generation: int) -> tuple[TaskResult, ...]:
+        return SimulatedExecutor().run(task_ids, 1 if generation >= 2 else 0)
+
+    receipt = run_outer_loop(job, executor=executor, lineage=lineage)
+    assert receipt.iterations[1].accepted is False
+    assert receipt.iterations[2].accepted is True
+    assert lineage.current().harness_hash == f"sha256:{2:064x}"
 
 
 def test_improve_port_can_call_apply_proposal(tmp_path: Path) -> None:

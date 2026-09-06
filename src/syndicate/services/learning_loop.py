@@ -45,19 +45,26 @@ def _measurements(
 ) -> tuple[TrialMeasurement, ...]:
     rows: list[TrialMeasurement] = []
     for offset, result in enumerate(results):
-        passed = result.outcome is TaskOutcome.PASSED
         rows.append(
             TrialMeasurement(
                 trial_id=UUID(int=start + offset),
                 task_id=result.task_id,
                 arm=arm,
-                outcome=TrialOutcome.PASSED if passed else TrialOutcome.FAILED,
-                verifier_complete=True,
-                spend_microusd=1,
-                elapsed_ms=1,
+                outcome=_trial_outcome(result.outcome),
+                verifier_complete=result.outcome is not TaskOutcome.INFRA_ERROR,
+                spend_microusd=None,
+                elapsed_ms=0,
             )
         )
     return tuple(rows)
+
+
+def _trial_outcome(outcome: TaskOutcome) -> TrialOutcome:
+    if outcome is TaskOutcome.PASSED:
+        return TrialOutcome.PASSED
+    if outcome is TaskOutcome.INFRA_ERROR:
+        return TrialOutcome.INCOMPLETE
+    return TrialOutcome.FAILED
 
 
 def _policy(task_ids: tuple[str, ...]) -> ComparisonPolicy:
@@ -116,26 +123,31 @@ def run_outer_loop(
     executor: Executor | None = None,
     improve: Improve | None = None,
     lineage: HarnessLineage | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> LoopReceipt:
     run = executor or SimulatedExecutor().run
     bump = improve or (lambda generation: generation + 1)
     iterations: list[Iteration] = []
     generation = 0
+    incumbent_generation = 0
     best = -1.0
     stagnant = 0
     baseline: tuple[TaskResult, ...] | None = None
     for number in range(job.max_iterations):
+        if cancelled is not None and cancelled():
+            return LoopReceipt(tuple(iterations), StopReason.CANCELLED, max(best, 0.0))
         results = run(job.task_ids, generation)
         score = score_of(results)
         accepted = score > best
         if accepted and baseline is not None:
             accepted = _select(
-                baseline, results, job, lineage, generation - 1, generation
+                baseline, results, job, lineage, incumbent_generation, generation
             )
         if accepted:
             best = score
             stagnant = 0
             baseline = results
+            incumbent_generation = generation
         else:
             stagnant += 1
         stop = _decide_stop(score, stagnant, number, job, accepted)

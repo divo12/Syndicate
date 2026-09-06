@@ -55,8 +55,12 @@ def main(arguments: list[str]) -> int:
         )
         if job["status"] not in {"queued", "running"}:
             print(json.dumps(job, indent=2, sort_keys=True))
-            return 0
+            return terminal_exit(str(job["status"]))
         time.sleep(1)
+
+
+def terminal_exit(status: str) -> int:
+    return 0 if status == "completed" else 1
 
 
 if __name__ == "__main__":

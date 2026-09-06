@@ -10,7 +10,7 @@ down:
 	docker compose down
 
 health:
-	curl -s http://127.0.0.1:8000/health
+	curl -sf http://127.0.0.1:8000/health
 
 client:
 	python3 scripts/job_client.py regex-log extract-elf log-summary-date-ranges

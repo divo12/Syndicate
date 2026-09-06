@@ -8,6 +8,7 @@ from syndicate.models.budget import BudgetCap
 from syndicate.models.commands import JudgeTaskCommand, RunTrialCommand
 from syndicate.models.envelope import ArtifactKind, ArtifactRef, CommandStatus
 from syndicate.models.jobs import ExecutorKind, JobSubmission, TaskResult
+from syndicate.models.judging import TaskReport
 from syndicate.repositories.artifact_store import ArtifactStore
 from syndicate.repositories.jobs import MemoryJobStore
 from syndicate.services.benchmark import RunOutcome, VerifierReason, VerifierReceipt
@@ -63,9 +64,65 @@ def test_run_trial_and_judge_task_handlers_are_installed(tmp_path: Path) -> None
         store,
     )
     assert judged.status is CommandStatus.COMPLETED
+    assert store.load(judged.artifact_refs[0], TaskReport).task_id == "regex-log"
 
 
-def test_harbor_executor_fails_closed_without_credentials() -> None:
+def test_judge_task_rejects_multiple_run_refs(tmp_path: Path) -> None:
+    root = tmp_path / ".syndicate"
+    root.mkdir()
+    store = ArtifactStore(root.resolve())
+    digest = "a" * 64
+    first = execute_run_trial(
+        RunTrialCommand(
+            operation_id=UUID(int=1),
+            attempt_id=UUID(int=2),
+            task_id="regex-log",
+            harness_hash=digest,
+            memory_hash=digest,
+            model_config_hash=digest,
+            runtime_image_hash=digest,
+            judge_spec_hash=digest,
+            verifier_version="1",
+            runtime_request_ref=ArtifactRef(
+                kind=ArtifactKind.RUNTIME_REQUEST,
+                operation_id=UUID(int=1),
+                attempt_id=UUID(int=2),
+                sha256=digest,
+            ),
+            budget=_budget(),
+        ),
+        store,
+    )
+    extra = first.artifact_refs[0]
+    try:
+        execute_judge_task(
+            JudgeTaskCommand(
+                operation_id=UUID(int=3),
+                attempt_id=UUID(int=4),
+                task_id="regex-log",
+                judge_spec_hash=digest,
+                run_refs=(extra, extra),
+                judge_input_ref=ArtifactRef(
+                    kind=ArtifactKind.JUDGE_INPUT,
+                    operation_id=UUID(int=3),
+                    attempt_id=UUID(int=4),
+                    sha256=digest,
+                ),
+                budget=_budget(),
+            ),
+            store,
+        )
+    except ValueError as error:
+        assert "exactly one" in str(error)
+    else:
+        raise AssertionError("multiple run refs must fail")
+
+
+def test_harbor_executor_fails_closed_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("E2B_API_KEY", raising=False)
+    monkeypatch.delenv("SYNDICATE_HARBOR_STUB", raising=False)
     try:
         HarborExecutor().run(("regex-log",), 0)
     except ValueError as error:
@@ -130,6 +187,23 @@ def test_trial_cli_prints_one_task_result(
     printed = TaskResult.model_validate_json(capsys.readouterr().out.strip())
     assert printed.task_id == "regex-log"
     assert printed.outcome.value == "passed"
+    assert main(["trial", "--task-id", " ", "--generation", "0"]) == 2
+    assert (
+        main(
+            [
+                "trial",
+                "--task-id",
+                "regex-log",
+                "--generation",
+                "0",
+                "--failing-task-id",
+                "extract-elf",
+            ]
+        )
+        == 0
+    )
+    other = TaskResult.model_validate_json(capsys.readouterr().out.strip())
+    assert other.outcome.value == "passed"
 
 
 def test_harbor_job_is_marked_failed_without_keys() -> None:

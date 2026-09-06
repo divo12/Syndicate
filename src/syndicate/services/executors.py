@@ -19,10 +19,15 @@ class SimulatedExecutor:
 
     kind = ExecutorKind.SIMULATED
 
-    def run(self, task_ids: tuple[str, ...], generation: int) -> tuple[TaskResult, ...]:
+    def run(
+        self,
+        task_ids: tuple[str, ...],
+        generation: int,
+        failing_task_id: str | None = None,
+    ) -> tuple[TaskResult, ...]:
         if not task_ids:
             raise ValueError("task_ids must not be empty")
-        failing = task_ids[-1]
+        failing = failing_task_id if failing_task_id is not None else task_ids[-1]
         results: list[TaskResult] = []
         for task_id in task_ids:
             passed = generation > 0 or task_id != failing

@@ -10,7 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 COPY src ./src
 
-RUN pip install --no-cache-dir ".[api]"
+RUN pip install --no-cache-dir ".[api]" \
+    && useradd --create-home --uid 10001 syndicate \
+    && mkdir -p /app/.syndicate/lineage \
+    && chown -R syndicate:syndicate /app
 
+USER syndicate
 EXPOSE 8000
 CMD ["uvicorn", "syndicate.controllers.http:app", "--host", "0.0.0.0", "--port", "8000"]
