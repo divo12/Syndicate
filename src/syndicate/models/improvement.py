@@ -1,14 +1,16 @@
 """Evidence-bound diagnosis and pre-evaluation candidate manifests."""
 
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from syndicate.models.candidate import CandidateSeal
 from syndicate.models.evidence import SpanCitation
 from syndicate.models.judging import ReportStatus, TaskReport
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
+FileContent = Annotated[str, Field()]
 Digest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 Path = Annotated[
     str,
@@ -139,3 +141,35 @@ class HarnessChangeManifest(ImprovementObject):
         if any(check.status is not CheckStatus.PASSED for check in self.focused_checks):
             raise ValueError("Manifest requires passing focused checks")
         return self
+
+
+class ProposalEdit(ImprovementObject):
+    path: Text
+    content: FileContent
+
+
+class ProposalDraft(ImprovementObject):
+    edits: tuple[ProposalEdit, ...] = Field(min_length=1)
+    intended_fix: Text
+    expected_affected_tasks: tuple[Text, ...] = Field(min_length=1)
+    at_risk_tasks: tuple[Text, ...]
+    metric_effects: tuple[MetricEffect, ...] = Field(min_length=1)
+
+
+class ProposalRequest(ImprovementObject):
+    candidate_id: Text
+    diagnosis: FailureDiagnosis
+    usage_reservation_ref: Text
+    focused_checks: tuple[Text, ...] = Field(min_length=1)
+    submitted_at: AwareDatetime
+    model: Literal["gpt-5.4-mini"] = "gpt-5.4-mini"
+
+
+class CandidateReceipt(ImprovementObject):
+    manifest: HarnessChangeManifest
+    seal: CandidateSeal
+    usage_reservation_ref: Text
+
+    model_config = ConfigDict(
+        frozen=True, strict=True, extra="forbid", arbitrary_types_allowed=True
+    )
