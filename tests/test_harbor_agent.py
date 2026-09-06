@@ -41,6 +41,7 @@ def test_success_proof_uses_existing_controller_runner() -> None:
         runner.sandbox,
         harness_dir=Path("seed"),
         framework_lock=Path("lock"),
+        trace_events=[],
     )
 
 

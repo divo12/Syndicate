@@ -135,3 +135,57 @@ def prepare_baseline(
         rendered_prompt=rendered,
         prompt_suffix=suffix,
     )
+
+
+def prepare_workspace(
+    seed_dir: Path,
+    framework_lock: Path,
+    model: ModelSettings,
+    prompt_variables: PromptVariables,
+    prompt_suffix: str = "",
+) -> BaselineManifest:
+    """Bind an evolved harness tree that may add skills, tools, or prompt edits."""
+    if seed_dir.is_symlink() or any(path.is_symlink() for path in seed_dir.rglob("*")):
+        raise ValueError("workspace must not contain symlinks")
+    files = tuple(path for path in seed_dir.rglob("*") if path.is_file())
+    if not files:
+        raise ValueError("workspace has no files")
+    prompt = seed_dir / "systemprompt.md"
+    if not prompt.is_file():
+        raise ValueError("workspace is missing systemprompt.md")
+    suffix = prompt_suffix.strip()
+    rendered = prompt_variables.render(prompt.read_text(encoding="utf-8"))
+    if suffix:
+        rendered = f"{rendered.rstrip()}\n\n{suffix}\n"
+    artifacts = tuple(
+        SeedArtifact(
+            path=path.relative_to(seed_dir).as_posix(),
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+        for path in sorted(files)
+    )
+    return BaselineManifest(
+        artifacts=artifacts,
+        framework_lock_sha256=hashlib.sha256(framework_lock.read_bytes()).hexdigest(),
+        model=model,
+        prompt_variables=prompt_variables,
+        rendered_prompt=rendered,
+        prompt_suffix=suffix,
+    )
+
+
+def bind_harness(
+    seed_dir: Path,
+    framework_lock: Path,
+    model: ModelSettings,
+    prompt_variables: PromptVariables,
+    prompt_suffix: str = "",
+) -> BaselineManifest:
+    try:
+        return prepare_baseline(
+            seed_dir, framework_lock, model, prompt_variables, prompt_suffix
+        )
+    except ValueError:
+        return prepare_workspace(
+            seed_dir, framework_lock, model, prompt_variables, prompt_suffix
+        )

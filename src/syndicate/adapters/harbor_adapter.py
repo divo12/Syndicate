@@ -100,7 +100,10 @@ class SyndicateNexAUAgent(BaseAgent):
         )
         self.request = request
         self.api_key = api_key
-        self.harness_dir = _mounted_or(harness_dir, HARNESS_SOURCE, "HARNESS_SEED")
+        if request.harness_root.strip():
+            self.harness_dir = Path(request.harness_root)
+        else:
+            self.harness_dir = _mounted_or(harness_dir, HARNESS_SOURCE, "HARNESS_SEED")
         self.framework_lock = _mounted_or(
             framework_lock, FRAMEWORK_LOCK, "FRAMEWORK_LOCK"
         )
@@ -155,6 +158,7 @@ class SyndicateNexAUAgent(BaseAgent):
                 harness_dir=self.harness_dir,
                 framework_lock=self.framework_lock,
                 task_id=task_id,
+                logs_dir=self.logs_dir,
             ).run(self.request, self.api_key)
         except (Exception, asyncio.CancelledError) as error:
             # Stock Harbor catches timeout/installed-agent exit errors and continues

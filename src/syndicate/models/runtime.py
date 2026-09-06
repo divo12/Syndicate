@@ -53,6 +53,7 @@ class RuntimeRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
     baseline: BaselineManifest
+    harness_root: str = ""
     instruction: str = Field(min_length=1)
     budget: BudgetCap
     max_iterations: int = Field(gt=0)

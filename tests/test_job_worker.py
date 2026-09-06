@@ -5,6 +5,7 @@ import pytest
 from syndicate.adapters.trigger_jobs import NullTriggerLoop, trigger_from_env
 from syndicate.models.jobs import Job, JobStatus, JobSubmission, StopReason
 from syndicate.repositories.jobs import SqliteJobStore
+from syndicate.services.evolve_harness import EvolveReceipt
 from syndicate.services.executors import SimulatedExecutor, score_of
 from syndicate.services.job_worker import JobWorker
 
@@ -85,14 +86,41 @@ def test_default_improve_mines_failures_into_next_generation(
     store = _store(tmp_path)
     store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2, patience=2))
     root = tmp_path / "lineage"
-    finished = JobWorker(store, NullTriggerLoop(), lineage_root=root).process_one()
+    analyzed: list[str] = []
+
+    def analyze(analysis: Path) -> tuple[Path, ...]:
+        report = analysis / "detail" / "task-a-1.md"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("ROOT CAUSE: never PATCHed the seeded Okta user.\n")
+        (analysis / "overview.md").write_text("inspect-then-stop\n")
+        analyzed.append(analysis.name)
+        return (report,)
+
+    def evolve(analysis: Path, seed: Path, dest: Path) -> EvolveReceipt:
+        dest.mkdir(parents=True)
+        (dest / "systemprompt.md").write_text("Use ITSM mock PATCH workflow.\n")
+        (dest / "change_manifest.json").write_text(
+            '{"iteration":1,"changes":[{"id":"chg-1","constraint_level":"skill"}]}'
+        )
+        assert (analysis / "overview.md").is_file()
+        del seed
+        return EvolveReceipt(dest=dest, manifest={"iteration": 1})
+
+    finished = JobWorker(
+        store,
+        NullTriggerLoop(),
+        lineage_root=root,
+        analyze=analyze,
+        evolve=evolve,
+    ).process_one()
     assert finished is not None
     failures = (root / f"{finished.id}.failures.json").read_text(encoding="utf-8")
     assert "test_gw_account_suspended" in failures
     assert "task-a-1" in failures
-    lessons = (tmp_path / "harnesses" / "gen-1.lessons.md").read_text(encoding="utf-8")
-    assert "test_gw_account_suspended" in lessons
-    assert "tests/test.sh" in lessons
+    assert analyzed
+    assert (tmp_path / "harnesses" / "gen-1" / "change_manifest.json").is_file()
+    verifier = tmp_path / "analysis" / "gen-0" / "detail" / "task-a-1" / "verifier"
+    assert verifier.is_dir()
 
 
 def test_default_improve_writes_receipt(tmp_path: Path) -> None:

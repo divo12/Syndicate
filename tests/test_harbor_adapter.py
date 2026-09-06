@@ -52,6 +52,7 @@ def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
             harness_dir=tmp_path / "harness",
             framework_lock=tmp_path / "lock",
             task_id="",
+            logs_dir=tmp_path,
         )
         lifecycle.return_value.run.assert_awaited_once_with(
             agent.request, agent.api_key

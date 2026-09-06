@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from syndicate.controllers.handler_inputs import RuntimeInput
 from syndicate.controllers.live_handlers import LiveHandlers, run
-from syndicate.models.baseline import PromptVariables, prepare_baseline
+from syndicate.models.baseline import PromptVariables, bind_harness
 from syndicate.models.budget import BudgetCap
 from syndicate.models.commands import RunTrialCommand
 from syndicate.models.envelope import ArtifactKind, ArtifactRef
@@ -55,6 +55,13 @@ def _first_existing(paths: tuple[Path, ...], kind: str) -> Path:
         if kind == "file" and path.is_file():
             return path
     raise ValueError(f"Harbor {kind} is not mounted")
+
+
+def _harness_for(generation: int) -> Path:
+    evolved = _artifact_root() / "harnesses" / f"gen-{generation}"
+    if (evolved / "systemprompt.md").is_file():
+        return evolved
+    return _harness_seed()
 
 
 def _harness_seed() -> Path:
@@ -136,8 +143,8 @@ def _runtime_request(
     task_id: str, config: ModelConfig, budget: BudgetCap, generation: int
 ) -> RuntimeRequest:
     return RuntimeRequest(
-        baseline=prepare_baseline(
-            _harness_seed(),
+        baseline=bind_harness(
+            _harness_for(generation),
             _framework_lock(),
             config.settings,
             PromptVariables(
@@ -145,8 +152,9 @@ def _runtime_request(
                 username="syndicate",
                 working_directory="/app",
             ),
-            prompt_suffix=lessons_for(_artifact_root(), generation),
+            lessons_for(_artifact_root(), generation),
         ),
+        harness_root=_harness_for(generation).as_posix(),
         instruction=_task_instruction(task_id),
         budget=budget,
         max_iterations=3,

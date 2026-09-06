@@ -122,6 +122,20 @@ def test_each_prompt_variable_changes_identity(variables: PromptVariables) -> No
     assert restored.prompt_variables == VARIABLES
 
 
+def test_evolved_workspace_can_add_a_skill_without_seed_pin(tmp_path: Path) -> None:
+    from syndicate.models.baseline import bind_harness, prepare_workspace
+
+    extra = tmp_path / "evolved"
+    copytree(ROOT / "harnesses/seed", extra)
+    skill = extra / "skills" / "itsm-mocks" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("PATCH seeded mock records.\n")
+    evolved = prepare_workspace(extra, ROOT / "requirements.lock", SETTINGS, VARIABLES)
+    assert any(item.path.endswith("SKILL.md") for item in evolved.artifacts)
+    rebound = bind_harness(extra, ROOT / "requirements.lock", SETTINGS, VARIABLES)
+    assert rebound.identity_hash == evolved.identity_hash
+
+
 def test_prompt_suffix_changes_identity_without_mutating_seed() -> None:
     first = prepare_baseline(
         ROOT / "harnesses/seed", ROOT / "requirements.lock", SETTINGS, VARIABLES

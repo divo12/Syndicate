@@ -20,7 +20,7 @@ from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.adapters.e2b_shell import E2BShell
-from syndicate.models.baseline import prepare_baseline
+from syndicate.models.baseline import bind_harness
 from syndicate.models.runtime import (
     RoleDispatchReceipt,
     RoleDispatchRequest,
@@ -52,7 +52,11 @@ class _ToolReply:
 
 
 async def dispatch_role(
-    request: RoleDispatchRequest, tools: tuple[Tool, ...], client: OpenAI
+    request: RoleDispatchRequest,
+    tools: tuple[Tool, ...],
+    client: OpenAI,
+    *,
+    accept_incomplete: bool = False,
 ) -> RoleDispatchReceipt:
     """Run one bounded role using an admitted provider and caller-owned tools."""
     if client.max_retries != request.max_retries:
@@ -97,10 +101,15 @@ async def dispatch_role(
                     message=request.prompt,
                     custom_llm_client_provider=lambda _: client,
                 )
-            if completion.reason not in (
+            allowed = {
                 AgentStopReason.SUCCESS,
                 AgentStopReason.NO_MORE_TOOL_CALLS,
-            ):
+            }
+            if accept_incomplete:
+                allowed.add(AgentStopReason.MAX_ITERATIONS_REACHED)
+                allowed.add(AgentStopReason.STOP_TOOL_TRIGGERED)
+                allowed.add(AgentStopReason.CONTEXT_TOKEN_LIMIT)
+            if completion.reason not in allowed:
                 raise RuntimeStopped(completion.reason)
             if not isinstance(result, str):
                 raise TypeError("Unexpected NexAU response shape")
@@ -121,16 +130,17 @@ async def run_on_controller(
     *,
     harness_dir: Path,
     framework_lock: Path,
+    trace_events: list[dict[str, object]] | None = None,
 ) -> str:
     with neatlogs.trace("solve-benchmark-task", kind="WORKFLOW") as span:
         span.set_attribute("input.value", request.instruction)
         installed_runtime()
-        baseline = prepare_baseline(
+        baseline = bind_harness(
             harness_dir,
             framework_lock,
             request.baseline.model,
             request.baseline.prompt_variables,
-            prompt_suffix=request.baseline.prompt_suffix,
+            request.baseline.prompt_suffix,
         )
         if baseline.identity_hash != request.baseline.identity_hash:
             raise ValueError("Runtime baseline differs from approved declaration")
@@ -140,13 +150,17 @@ async def run_on_controller(
             E2BShell(sandbox, request.baseline.prompt_variables.working_directory),
             timeout_ms=request.shell_timeout_ms,
         ) as shell:
-            result = await _run(request, key, shell, harness_dir)
+            result = await _run(request, key, shell, harness_dir, trace_events)
         span.set_attribute("output.value", result)
         return result
 
 
 async def _run(
-    request: RuntimeRequest, key: SecretStr, shell: ShellBinding, harness_dir: Path
+    request: RuntimeRequest,
+    key: SecretStr,
+    shell: ShellBinding,
+    harness_dir: Path,
+    trace_events: list[dict[str, object]] | None = None,
 ) -> str:
     loop = asyncio.get_running_loop()
     completion = _Completion()
@@ -157,6 +171,14 @@ async def _run(
             span.set_attribute("input.value", value.model_dump_json())
             result = await shell.run_shell_command(value)
             span.set_attribute("output.value", result.model_dump_json())
+            if trace_events is not None:
+                trace_events.append(
+                    {
+                        "kind": "shell",
+                        "command": value.command,
+                        "stdout": result.content,
+                    }
+                )
             return _ToolReply(result.content, result.return_display)
 
     def tool(
