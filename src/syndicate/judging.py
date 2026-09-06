@@ -215,7 +215,7 @@ def execute_judge(
     )
     reason = "Judge invocation failed or returned inadmissible evidence"
     try:
-        _require_ready(spec, reader, verifier_refs)
+        require_judge_evidence(spec, reader, verifier_refs)
         attempt = invoke()
         return validate_report(
             spec,
@@ -245,7 +245,7 @@ class _EvidenceUnavailable(ValueError):
     """Safe controller-generated evidence failure, without provider payloads."""
 
 
-def _require_ready(
+def require_judge_evidence(
     spec: JudgeSpec, reader: EvidenceReader, verifier_refs: tuple[RecordCitation, ...]
 ) -> None:
     if any(grant.link.task_id != spec.task_id for grant in reader.grants):
