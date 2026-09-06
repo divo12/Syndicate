@@ -44,8 +44,7 @@ def test_citation_variants_cannot_mix_span_and_record_fields() -> None:
     restored: Citation = TypeAdapter(Citation).validate_json(citation.model_dump_json())
     assert restored == citation
     assert (
-        setup_reader()[1].validate_citation(citation).status
-        == EvidenceStatus.INCOMPLETE
+        setup_reader()[1].validate_citation(citation).status == EvidenceStatus.FORBIDDEN
     )
     mixed = citation.model_dump_json().replace('"record_ref"', '"span_ref"')
     with pytest.raises(ValidationError):
