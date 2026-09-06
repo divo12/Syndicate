@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Literal, NewType
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -84,11 +84,16 @@ class _TraceContext(BaseModel):
     verification_ready: bool = False
     span_payload_complete: bool = False
     span_tree_complete: bool = False
-    spans: tuple[_McpV2Span, ...] = ()
+    spans: tuple[_McpV2Span, ...] = Field(default=(), max_length=1000)
     span_count: int = Field(default=0, ge=0)
     returned_span_count: int = Field(default=0, ge=0)
     root_span_count: int = Field(default=0, ge=0)
     truncated: bool = False
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        return None
 
 
 class NeatlogsReadbackReader:
@@ -100,6 +105,7 @@ class NeatlogsReadbackReader:
         self._api_key = api_key
         self._endpoint = endpoint.rstrip("/") + "/mcp"
         self._session_id: str | None = None
+        self._opener = build_opener(_NoRedirect())
 
     def fetch(self, expected: ExpectedTrace) -> NeatlogsReadbackReceipt:
         payload = self._tool(
@@ -133,7 +139,7 @@ class NeatlogsReadbackReader:
         if self._session_id is None:
             return
         try:
-            urlopen(
+            self._opener.open(
                 Request(self._endpoint, headers=self._headers(), method="DELETE"),
                 timeout=15,
             ).close()
@@ -163,10 +169,10 @@ class NeatlogsReadbackReader:
             b'"clientInfo":{"name":"syndicate","version":"0.1.0"}}}'
         )
         try:
-            with urlopen(
+            with self._opener.open(
                 Request(self._endpoint, data=body, headers=self._headers()), timeout=15
             ) as response:
-                response.read()
+                response.read(1_000_001)
                 self._session_id = response.headers.get("mcp-session-id")
         except (HTTPError, URLError, OSError) as error:
             raise ValueError("Neatlogs MCP unavailable") from error
@@ -175,9 +181,12 @@ class NeatlogsReadbackReader:
 
     def _response(self, request: Request) -> str:
         try:
-            with urlopen(request, timeout=15) as response:
+            with self._opener.open(request, timeout=15) as response:
+                body = response.read(1_000_001)
+                if len(body) > 1_000_000:
+                    raise ValueError("Neatlogs MCP response exceeds byte limit")
                 envelope = _McpEnvelope.model_validate_json(
-                    self._json_response(response.read().decode())
+                    self._json_response(body.decode())
                 )
         except (HTTPError, URLError, OSError, ValueError) as error:
             raise ValueError("Neatlogs MCP readback unavailable") from error
@@ -208,6 +217,22 @@ class NeatlogsReadbackReader:
         spans: tuple[ReadbackSpan, ...],
         finalized: bool,
     ) -> bool:
+        ids = {span.span_id for span in spans}
+        roots = [span for span in context.spans if span.parent_span_id is None]
+        if len(roots) != 1 or len(ids) != len(spans):
+            return False
+        parents = {span.span_id: span.parent_span_id for span in context.spans}
+        for span in spans:
+            seen: set[str] = set()
+            current: str | None = span.span_id
+            while current is not None:
+                if current in seen:
+                    return False
+                seen.add(current)
+                parent = parents.get(current)
+                if parent is not None and parent not in ids:
+                    return False
+                current = parent
         return all(
             (
                 context.trace_id == expected.trace_ref,
@@ -216,7 +241,6 @@ class NeatlogsReadbackReader:
                 len(spans) == context.span_count,
                 context.returned_span_count == context.span_count,
                 context.root_span_count == 1,
-                len({span.span_id for span in spans}) == len(spans),
                 expected.link
                 == next(
                     (

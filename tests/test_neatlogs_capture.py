@@ -59,8 +59,9 @@ class Sdk:
             AbstractContextManager[SdkSpan, bool | None], SpanManager(self.spans.pop(0))
         )
 
-    def flush(self) -> None:
+    def flush(self) -> bool:
         self.flushed = True
+        return True
 
     def shutdown(self) -> None:
         return None
@@ -76,7 +77,7 @@ def link() -> RunLink:
 
 
 def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
-    sdk = Sdk((Span(Context(1, 2)), Span(Context(1, 3))))
+    sdk = Sdk((Span(Context(1, 2)), Span(Context(1, 3)), Span(Context(1, 4))))
     capture = NeatlogsCapture("test", sdk)
     capture.start()
     with capture.span(link(), "first"):
@@ -86,20 +87,34 @@ def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
     receipt = capture.flush(link())
     assert receipt.state is CaptureState.FLUSHED_UNVERIFIED
     assert receipt.trace_ref == "0" * 31 + "1"
-    assert receipt.expected_span_refs == ("0" * 15 + "2", "0" * 15 + "3")
+    assert receipt.expected_span_refs == (
+        "0" * 15 + "2",
+        "0" * 15 + "3",
+        "0" * 15 + "4",
+    )
     assert sdk.flushed
+
+
+def test_failed_flush_blocks_receipt() -> None:
+    sdk = Sdk((Span(Context(1, 2)), Span(Context(1, 3))))
+    sdk.flush = lambda: False  # type: ignore[method-assign]
+    capture = NeatlogsCapture("test", sdk)
+    capture.start()
+    with capture.span(link(), "tool"):
+        pass
+    assert capture.flush(link()).state is CaptureState.BLOCKED
 
 
 def test_mixed_duplicate_or_missing_identity_blocks_without_flush() -> None:
     for spans in (
-        (Span(Context(1, 2)), Span(Context(2, 3))),
-        (Span(Context(1, 2)), Span(Context(1, 2))),
-        (Span(Context(0, 2)),),
+        (Span(Context(1, 2)), Span(Context(2, 3)), Span(Context(2, 4))),
+        (Span(Context(1, 2)), Span(Context(1, 2)), Span(Context(1, 3))),
+        (Span(Context(0, 2)), Span(Context(0, 3))),
     ):
         sdk = Sdk(spans)
         capture = NeatlogsCapture("test", sdk)
         capture.start()
-        for index in range(len(spans)):
+        for index in range(len(spans) - 1):
             with capture.span(link(), str(index)):
                 pass
         assert capture.flush(link()).state is CaptureState.BLOCKED
