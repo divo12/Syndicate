@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from syndicate.candidate_validation import CandidateValidationError
 from syndicate.candidate_workspace import CandidateWorkspace, create_candidate_workspace
 from syndicate.evidence_contracts import SpanCitation
 from syndicate.improvement import (
@@ -151,3 +152,22 @@ def test_workspace_must_match_the_diagnosed_incumbent(tmp_path: Path) -> None:
             lambda _: draft().model_dump_json(),
             lambda _, __: True,
         )
+
+
+def test_symlink_swap_cannot_write_outside_candidate(tmp_path: Path) -> None:
+    candidate = workspace(tmp_path)
+    external = tmp_path / "outside.txt"
+    external.write_text("outside", encoding="utf-8")
+    target = candidate.candidate_root / PATH
+    target.unlink()
+    target.symlink_to(external)
+
+    with pytest.raises(CandidateValidationError, match="symlink"):
+        apply_proposal(
+            request(candidate.candidate_parent_hash),
+            candidate,
+            lambda _: draft().model_dump_json(),
+            lambda _, __: True,
+        )
+
+    assert external.read_text(encoding="utf-8") == "outside"

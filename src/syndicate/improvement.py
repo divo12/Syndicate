@@ -1,11 +1,17 @@
 """Apply one model proposal inside a controller-created candidate workspace."""
 
+import os
+import stat
 from collections.abc import Callable
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from syndicate.candidate_validation import CandidateSeal, seal_candidate
+from syndicate.candidate_validation import (
+    CandidateSeal,
+    CandidateValidationError,
+    seal_candidate,
+)
 from syndicate.candidate_workspace import CandidateWorkspace
 from syndicate.improvement_contracts import (
     CandidateCheck,
@@ -70,9 +76,33 @@ def _write_edits(workspace: CandidateWorkspace, draft: ProposalDraft) -> None:
     for edit in draft.edits:
         if edit.path not in allowed:
             raise ValueError("Proposal edit is outside the candidate workspace")
-        (workspace.candidate_root / edit.path).write_text(
-            edit.content, encoding="utf-8"
-        )
+        _write_edit(workspace, edit)
+
+
+def _write_edit(workspace: CandidateWorkspace, edit: ProposalEdit) -> None:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    directory_fd = os.open(workspace.candidate_root, directory_flags)
+    try:
+        parts = edit.path.split("/")
+        for part in parts[:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(parts[-1], file_flags, 0o644, dir_fd=directory_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise CandidateValidationError("candidate must contain regular files")
+            with os.fdopen(file_fd, "w", encoding="utf-8") as file:
+                file_fd = -1
+                file.write(edit.content)
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+    except OSError as error:
+        raise CandidateValidationError("candidate must not contain symlinks") from error
+    finally:
+        os.close(directory_fd)
 
 
 def _checks(
