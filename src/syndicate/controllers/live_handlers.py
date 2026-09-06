@@ -7,9 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from harbor.models.environment_type import EnvironmentType
+from harbor.models.trial.config import (
+    AgentConfig,
+    EnvironmentConfig,
+    TaskConfig,
+    TrialConfig,
+)
+from harbor.trial.trial import Trial
 from openai import OpenAI
 from pydantic import SecretStr
 
+from syndicate.adapters.harbor_adapter import SyndicateNexAUAgent
 from syndicate.controllers.handler_inputs import JudgeInput, ProposalInput, RuntimeInput
 from syndicate.models.budget import ProductRole
 from syndicate.models.candidate import CandidateWorkspace
@@ -32,16 +41,30 @@ from syndicate.models.judging import TaskReport
 from syndicate.models.runtime import RuntimeRequest
 from syndicate.observability.neatlogs_readback import NeatlogsReadbackReader
 from syndicate.repositories.artifact_store import ArtifactStore
+from syndicate.repositories.benchmark_manifest import Assignment
 from syndicate.services.benchmark import RunReceipt
 from syndicate.services.candidate import create_candidate_workspace
 from syndicate.services.evidence import EvidenceReader
 from syndicate.services.improvement import apply_proposal
 from syndicate.services.judge_dispatch import dispatch_judge
 from syndicate.services.runtime import dispatch_role
+from syndicate.services.stock import (
+    ControllerTrialBinding,
+    load_cleanup_receipt,
+    postprocess_stock_result,
+)
 
 
 class TrialRunner(Protocol):
-    async def __call__(self, request: RuntimeRequest, key: SecretStr) -> RunReceipt: ...
+    async def __call__(
+        self,
+        command: RunTrialCommand,
+        request: RuntimeRequest,
+        key: SecretStr,
+        benchmark_root: Path,
+        run: Path,
+        assignments: tuple[Assignment, ...],
+    ) -> RunReceipt: ...
 
 
 class JudgeRunner(Protocol):
@@ -58,10 +81,43 @@ class CheckRunner(Protocol):
     def __call__(self, workspace: CandidateWorkspace, command: str) -> bool: ...
 
 
-async def _run_trial(request: RuntimeRequest, key: SecretStr) -> RunReceipt:
-    """The stock Harbor lifecycle has no controller entry point on this branch."""
-    del request, key
-    raise RuntimeError("Harbor trial environment is not attached to this controller")
+async def _run_trial(
+    command: RunTrialCommand,
+    request: RuntimeRequest,
+    key: SecretStr,
+    benchmark_root: Path,
+    run: Path,
+    assignments: tuple[Assignment, ...],
+) -> RunReceipt:
+    if command.task_id not in tuple(item.task_id for item in assignments):
+        raise ValueError("Task is not assigned to this controller")
+    task = benchmark_root / "tasks" / command.task_id
+    config = TrialConfig(
+        task=TaskConfig(path=task),
+        trials_dir=run / "harbor",
+        trial_name="trial",
+        agent=AgentConfig(
+            import_path=SyndicateNexAUAgent.import_path(),
+            model_name="gpt-5.4-mini",
+            kwargs={"request": request, "api_key": key},
+        ),
+        environment=EnvironmentConfig(type=EnvironmentType.E2B),
+    )
+    trial = await Trial.create(config)
+    if not isinstance(trial.agent, SyndicateNexAUAgent):
+        raise RuntimeError("Harbor did not construct the Syndicate agent")
+    binding = ControllerTrialBinding(
+        operation_id=command.operation_id,
+        attempt_id=command.attempt_id,
+        run_id=trial.id,
+        task_id=command.task_id,
+    )
+    trial.agent.bind_controller_receipt(binding, run)
+    result = await trial.run()
+    cleanup = load_cleanup_receipt(binding, run)
+    return postprocess_stock_result(
+        binding, cleanup, result, "harbor:trial:" + str(trial.id)
+    )
 
 
 async def _judge_task(
@@ -144,12 +200,26 @@ def run(
     store: ArtifactStore,
     key: SecretStr,
     handlers: LiveHandlers,
+    benchmark_root: Path,
+    assignments: tuple[Assignment, ...],
 ) -> CommandReceipt:
     input = store.load(command.runtime_request_ref, RuntimeInput)
     if input.request.budget != command.budget:
         raise ValueError("Runtime request budget differs from command")
     try:
-        result = asyncio.run(handlers.trial(input.request, key))
+        run_path = (
+            store.root / "runs" / str(command.operation_id) / str(command.attempt_id)
+        )
+        result = asyncio.run(
+            handlers.trial(
+                command,
+                input.request,
+                key,
+                benchmark_root,
+                run_path,
+                assignments,
+            )
+        )
     except (OSError, RuntimeError, TimeoutError) as error:
         raise ValueError("Harbor trial did not complete") from error
     if result.task_id != command.task_id:
