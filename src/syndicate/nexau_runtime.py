@@ -1,11 +1,10 @@
-"""NexAU executor entry point; this module never runs tools on the controller host."""
+"""Controller-side NexAU bridge; every tool runs in the supplied E2B sandbox."""
 
 import asyncio
-import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from e2b import AsyncSandbox
 from nexau import Agent, AgentConfig
 from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.execution.hooks import (
@@ -15,17 +14,13 @@ from nexau.archs.main_sub.execution.hooks import (
 )
 from nexau.archs.main_sub.execution.stop_reason import AgentStopReason
 from nexau.archs.tool import Tool
-from nexau.archs.tracer.adapters.in_memory import InMemoryTracer
 from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.baseline import prepare_baseline
-from syndicate.runtime_contracts import RuntimeExit, RuntimeRequest, installed_runtime
+from syndicate.runtime_contracts import RuntimeRequest, installed_runtime
 from syndicate.shell import ShellBinding, ShellRequest
-from syndicate.shell_backend import ContainerShell
-
-HARNESS = Path("/run/syndicate/harness")
-LOGS = Path("/logs/agent")
+from syndicate.shell_backend import E2BShell
 
 
 class RuntimeStopped(RuntimeError):
@@ -48,15 +43,18 @@ class _ToolReply:
     returnDisplay: str
 
 
-async def run_in_container(request: RuntimeRequest, key: SecretStr) -> str:
-    if os.getuid() != 10001 or not Path("/.dockerenv").is_file():
-        raise RuntimeError("NexAU requires the dedicated task container user")
-    if "\nNoNewPrivs:\t1" not in Path("/proc/self/status").read_text():
-        raise RuntimeError("NexAU requires no-new-privileges")
+async def run_on_controller(
+    request: RuntimeRequest,
+    key: SecretStr,
+    sandbox: AsyncSandbox,
+    *,
+    harness_dir: Path,
+    framework_lock: Path,
+) -> str:
     installed_runtime()
     baseline = prepare_baseline(
-        HARNESS,
-        Path("/opt/syndicate/requirements.lock"),
+        harness_dir,
+        framework_lock,
         request.baseline.model,
         request.baseline.prompt_variables,
     )
@@ -64,23 +62,21 @@ async def run_in_container(request: RuntimeRequest, key: SecretStr) -> str:
         raise ValueError("Runtime baseline differs from approved declaration")
     if not key.get_secret_value().strip():
         raise ValueError("Explicit API credential required")
-    LOGS.mkdir(parents=True, exist_ok=True)
     async with ShellBinding(
-        ContainerShell(Path("/app")), timeout_ms=request.shell_timeout_ms
+        E2BShell(sandbox, request.baseline.prompt_variables.working_directory),
+        timeout_ms=request.shell_timeout_ms,
     ) as shell:
-        return await _run(request, key, shell)
+        return await _run(request, key, shell, harness_dir)
 
 
-async def _run(request: RuntimeRequest, key: SecretStr, shell: ShellBinding) -> str:
+async def _run(
+    request: RuntimeRequest, key: SecretStr, shell: ShellBinding, harness_dir: Path
+) -> str:
     loop = asyncio.get_running_loop()
-    tracer = InMemoryTracer()
     completion = _Completion()
-    final_response: str | None = None
 
     async def invoke(value: ShellRequest) -> _ToolReply:
         result = await shell.run_shell_command(value)
-        with (LOGS / "shell-results.jsonl").open("a", encoding="utf-8") as output:
-            output.write(result.model_dump_json() + "\n")
         return _ToolReply(result.content, result.return_display)
 
     def tool(
@@ -98,7 +94,7 @@ async def _run(request: RuntimeRequest, key: SecretStr, shell: ShellBinding) -> 
         return asyncio.run_coroutine_threadsafe(invoke(value), loop).result()
 
     configured_tool = Tool.from_yaml(
-        str(HARNESS / "tool_descriptions/run_shell_command.tool.yaml"), binding=tool
+        str(harness_dir / "tool_descriptions/run_shell_command.tool.yaml"), binding=tool
     )
     configured_tool.disable_parallel = True
     model = request.baseline.model
@@ -110,7 +106,6 @@ async def _run(request: RuntimeRequest, key: SecretStr, shell: ShellBinding) -> 
         max_context_tokens=request.max_context_tokens,
         retry_attempts=1,
         tools=[configured_tool],
-        tracers=[tracer],
         middlewares=[completion],
         llm_config=LLMConfig(
             model=model.deployment,
@@ -144,29 +139,6 @@ async def _run(request: RuntimeRequest, key: SecretStr, shell: ShellBinding) -> 
                 raise RuntimeStopped(completion.reason)
             if not isinstance(result, str):
                 raise TypeError("Unexpected NexAU response shape")
-            final_response = result
-            (LOGS / "final.txt").write_text(result, encoding="utf-8")
             return result
         finally:
             agent.sync_cleanup()
-            (LOGS / "runtime-exit.json").write_text(
-                RuntimeExit(
-                    stop_reason=completion.reason, final_response=final_response
-                ).model_dump_json(),
-                encoding="utf-8",
-            )
-            (LOGS / "nexau-trace.json").write_text(
-                json.dumps(tracer.dump_traces()), encoding="utf-8"
-            )
-
-
-if __name__ == "__main__":
-    value = RuntimeRequest.model_validate_json(
-        Path("/run/syndicate/request.json").read_bytes()
-    )
-    credential_path = Path("/run/syndicate/api-key")
-    credential = SecretStr(credential_path.read_text())
-    credential_path.unlink()
-    # NexAU patches asyncio.run; Runner still owns and closes the loop explicitly.
-    with asyncio.Runner() as runner:
-        runner.run(run_in_container(value, credential))

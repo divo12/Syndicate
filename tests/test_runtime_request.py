@@ -57,12 +57,25 @@ def test_invalid_dispatch_bounds(changes: str) -> None:
         RuntimeRequest.model_validate_json(json.dumps(wire))
 
 
-def test_runtime_refuses_controller_host() -> None:
+def test_runtime_requires_explicit_credential() -> None:
     import asyncio
+    from unittest.mock import AsyncMock, patch
 
     from pydantic import SecretStr
 
-    from syndicate.nexau_runtime import run_in_container
+    from syndicate.nexau_runtime import run_on_controller
 
-    with pytest.raises(RuntimeError, match="container user"):
-        asyncio.run(run_in_container(request(), SecretStr("fixture")))
+    root = Path(__file__).resolve().parents[1]
+    with patch("syndicate.nexau_runtime.E2BShell") as backend:
+        with pytest.raises(ValueError, match="Explicit API credential"):
+            with asyncio.Runner() as runner:
+                runner.run(
+                    run_on_controller(
+                        request(),
+                        SecretStr(" "),
+                        AsyncMock(),
+                        harness_dir=root / "harnesses/seed",
+                        framework_lock=root / "requirements.lock",
+                    )
+                )
+    backend.assert_not_called()
