@@ -3,6 +3,7 @@
 import hashlib
 import json
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -129,13 +130,6 @@ def parse_command(payload: str | bytes) -> CommandRequest:
     return _COMMAND_ADAPTER.validate_json(payload)
 
 
-def command_schema_json() -> str:
-    """Stable code-generation input; callers write it as a controller artifact."""
-    return json.dumps(
-        _COMMAND_ADAPTER.json_schema(), sort_keys=True, separators=(",", ":")
-    )
-
-
 class CommandStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
@@ -161,3 +155,38 @@ class CommandReceipt(WireModel):
     status: CommandStatus
     artifact_refs: tuple[ArtifactRef, ...] = ()
     error: CommandError | None = None
+
+
+def command_schema_json() -> str:
+    return json.dumps(
+        _COMMAND_ADAPTER.json_schema(), sort_keys=True, separators=(",", ":")
+    )
+
+
+def receipt_schema_json() -> str:
+    return json.dumps(
+        CommandReceipt.model_json_schema(), sort_keys=True, separators=(",", ":")
+    )
+
+
+def schema_artifact_paths(root: Path) -> tuple[Path, Path]:
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("Schema root must be an absolute nonsymlink path")
+    schema_root = root / "schemas"
+    return (
+        schema_root / "command-request-v1.json",
+        schema_root / "command-receipt-v1.json",
+    )
+
+
+def write_schemas(root: Path) -> tuple[Path, Path]:
+    paths = schema_artifact_paths(root)
+    paths[0].parent.mkdir(parents=True, exist_ok=True)
+    for path, payload in zip(
+        paths, (command_schema_json(), receipt_schema_json()), strict=True
+    ):
+        if path.exists() and path.read_text(encoding="utf-8") != payload:
+            raise ValueError("Versioned schema artifact differs from this controller")
+        if not path.exists():
+            path.write_text(payload, encoding="utf-8")
+    return paths

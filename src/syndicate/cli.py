@@ -38,6 +38,25 @@ def read_request(arguments: list[str], root: Path) -> tuple[CommandRequest, Path
     return command, expected
 
 
+def request_path(root: Path, command: Command) -> Path:
+    contained(root, root)
+    return (
+        root
+        / "runs"
+        / str(command.operation_id)
+        / str(command.attempt_id)
+        / "request.json"
+    )
+
+
+def write_request(root: Path, command: Command) -> Path:
+    path = request_path(root, command)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as request:
+        request.write(command.model_dump_json())
+    return path
+
+
 def failure(
     status: CommandStatus, reason: ErrorReason, command: Command | None
 ) -> CommandReceipt:
