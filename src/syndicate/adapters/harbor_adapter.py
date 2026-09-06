@@ -1,6 +1,7 @@
 """Run NexAU on the controller against Harbor's existing E2B task sandbox."""
 
 import asyncio
+import os
 import shlex
 from datetime import UTC, datetime
 from logging import Logger
@@ -23,8 +24,41 @@ from syndicate.services.stock import (
     _ControllerAuthority,
 )
 
-HARNESS_SOURCE = Path(__file__).parents[3] / "harnesses/seed"
-FRAMEWORK_LOCK = Path(__file__).parents[3] / "requirements.lock"
+HARNESS_SOURCE = Path(__file__).resolve().parents[3] / "harnesses/seed"
+FRAMEWORK_LOCK = Path(__file__).resolve().parents[3] / "requirements.lock"
+E2B_SANDBOX_TIMEOUT_SEC = 3600
+
+
+def cap_e2b_sandbox_timeout(timeout: int | None) -> int:
+    if timeout is None or timeout > E2B_SANDBOX_TIMEOUT_SEC:
+        return E2B_SANDBOX_TIMEOUT_SEC
+    return timeout
+
+
+def install_e2b_timeout_cap() -> None:
+    create = AsyncSandbox.create
+    if getattr(create, "_syndicate_capped", False):
+        return
+
+    async def capped(*args: object, **kwargs: object) -> AsyncSandbox:
+        raw = kwargs.get("timeout")
+        kwargs["timeout"] = cap_e2b_sandbox_timeout(
+            raw if isinstance(raw, int) else None
+        )
+        return await create(*args, **kwargs)
+
+    capped._syndicate_capped = True
+    AsyncSandbox.create = capped
+
+
+install_e2b_timeout_cap()
+
+
+def _mounted_or(explicit: Path, default: Path, env_name: str) -> Path:
+    if explicit != default:
+        return explicit
+    configured = os.environ.get(env_name)
+    return Path(configured) if configured else default
 
 
 def _sandbox(environment: BaseEnvironment) -> AsyncSandbox:
@@ -66,8 +100,10 @@ class SyndicateNexAUAgent(BaseAgent):
         )
         self.request = request
         self.api_key = api_key
-        self.harness_dir = harness_dir
-        self.framework_lock = framework_lock
+        self.harness_dir = _mounted_or(harness_dir, HARNESS_SOURCE, "HARNESS_SEED")
+        self.framework_lock = _mounted_or(
+            framework_lock, FRAMEWORK_LOCK, "FRAMEWORK_LOCK"
+        )
         self.cleanup_receipt: CleanupReceipt | None = None
         self._controller_authority: _ControllerAuthority | None = None
 
@@ -111,17 +147,21 @@ class SyndicateNexAUAgent(BaseAgent):
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
         try:
+            task_id = ""
+            if self._controller_authority is not None:
+                task_id = self._controller_authority.binding.task_id
             self.cleanup_receipt = await HarborAgent(
                 _sandbox(environment),
                 harness_dir=self.harness_dir,
                 framework_lock=self.framework_lock,
+                task_id=task_id,
             ).run(self.request, self.api_key)
-        except (Exception, asyncio.CancelledError):
+        except (Exception, asyncio.CancelledError) as error:
             # Stock Harbor catches timeout/installed-agent exit errors and continues
             # to verification. This adapter requires successful cleanup handoff.
             raise RuntimeError(
-                "Controller run failed; verifier handoff blocked"
-            ) from None
+                f"Controller run failed; verifier handoff blocked: {error}"
+            ) from error
         if self._controller_authority is not None:
             self._controller_authority.observe_settled_cleanup(self.cleanup_receipt)
             self._controller_authority.issue(datetime.now(UTC))

@@ -22,6 +22,8 @@ allow-direct-references = true
 [project.optional-dependencies]
 api = [
   "psycopg[binary]==3.2.9",
+  "fastapi==0.141.1",
+  "uvicorn==0.52.4",
 ]
 dev = [
   "pytest==8.4.1",

@@ -28,7 +28,7 @@ from syndicate.models.runtime import (
     installed_runtime,
 )
 from syndicate.models.shell import ShellBinding, ShellRequest
-from syndicate.observability.tracing import neatlogs
+from syndicate.observability.tracing import neatlogs, wrap_provider
 
 
 class RuntimeStopped(RuntimeError):
@@ -91,7 +91,7 @@ async def dispatch_role(
     try:
         with neatlogs.trace(f"dispatch-{request.role.value}", kind="WORKFLOW") as span:
             span.set_attribute("input.value", request.prompt)
-            client = neatlogs.wrap(client)
+            client = wrap_provider(client)
             async with asyncio.timeout(request.budget.max_seconds):
                 result = await agent.run_async(
                     message=request.prompt,
@@ -130,6 +130,7 @@ async def run_on_controller(
             framework_lock,
             request.baseline.model,
             request.baseline.prompt_variables,
+            prompt_suffix=request.baseline.prompt_suffix,
         )
         if baseline.identity_hash != request.baseline.identity_hash:
             raise ValueError("Runtime baseline differs from approved declaration")
@@ -205,7 +206,7 @@ async def _run(
         max_retries=0,
         timeout=request.budget.max_seconds,
     ) as client:
-        client = neatlogs.wrap(client)
+        client = wrap_provider(client)
         try:
             async with asyncio.timeout(request.budget.max_seconds):
                 result = await agent.run_async(

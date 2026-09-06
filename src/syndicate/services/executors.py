@@ -1,4 +1,4 @@
-"""Task executors used by the job worker. Harbor is wired in a later slice."""
+"""Task executors used by the job worker. Harbor binds to live handlers."""
 
 from __future__ import annotations
 
@@ -66,7 +66,9 @@ class HarborExecutor:
             raise ValueError("E2B_API_KEY is required for harbor executor")
         if os.environ.get("SYNDICATE_HARBOR_STUB") == "1":
             return SimulatedExecutor().run(task_ids, generation)
-        raise ValueError("Harbor live dispatch is not bound; use simulated")
+        from syndicate.services.harbor_dispatch import run_bound_harbor_task
+
+        return tuple(run_bound_harbor_task(task_id, generation) for task_id in task_ids)
 
 
 def score_of(results: tuple[TaskResult, ...]) -> float:

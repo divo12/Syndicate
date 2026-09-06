@@ -89,6 +89,7 @@ class BaselineManifest(BaseModel):
     model: ModelSettings
     prompt_variables: PromptVariables
     rendered_prompt: str
+    prompt_suffix: str = ""
 
     @property
     def identity_hash(self) -> str:
@@ -103,6 +104,7 @@ def prepare_baseline(
     framework_lock: Path,
     model: ModelSettings,
     prompt_variables: PromptVariables,
+    prompt_suffix: str = "",
 ) -> BaselineManifest:
     """Verify vendored bytes and bind their identity to model settings and lock bytes.
 
@@ -119,12 +121,17 @@ def prepare_baseline(
         digest = hashlib.sha256((seed_dir / artifact.path).read_bytes()).hexdigest()
         if digest != artifact.sha256:
             raise ValueError(f"seed artifact differs from upstream: {artifact.path}")
+    suffix = prompt_suffix.strip()
+    rendered = prompt_variables.render(
+        (seed_dir / "systemprompt.md").read_text(encoding="utf-8")
+    )
+    if suffix:
+        rendered = f"{rendered.rstrip()}\n\n{suffix}\n"
     return BaselineManifest(
         artifacts=SEED_ARTIFACTS,
         framework_lock_sha256=hashlib.sha256(framework_lock.read_bytes()).hexdigest(),
         model=model,
         prompt_variables=prompt_variables,
-        rendered_prompt=prompt_variables.render(
-            (seed_dir / "systemprompt.md").read_text(encoding="utf-8")
-        ),
+        rendered_prompt=rendered,
+        prompt_suffix=suffix,
     )

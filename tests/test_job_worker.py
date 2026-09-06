@@ -65,6 +65,47 @@ def test_worker_runs_without_trigger_credentials(
     assert finished.status is JobStatus.COMPLETED
 
 
+def test_default_improve_mines_failures_into_next_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARTIFACT_ROOT", str(tmp_path))
+    trial = tmp_path / "runs" / "op" / "att" / "harbor" / "trial"
+    verifier = trial / "verifier"
+    verifier.mkdir(parents=True)
+    (trial / "result.json").write_text(
+        '{"task_name": "abhishek203/task-a-1"}', encoding="utf-8"
+    )
+    (trial / "trial.log").write_text("Maximum iteration limit reached\n")
+    (verifier / "ctrf.json").write_text(
+        '{"results": {"tests": ['
+        '{"name": "test_gw_account_suspended", "status": "failed"}'
+        "]}}",
+        encoding="utf-8",
+    )
+    store = _store(tmp_path)
+    store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2, patience=2))
+    root = tmp_path / "lineage"
+    finished = JobWorker(store, NullTriggerLoop(), lineage_root=root).process_one()
+    assert finished is not None
+    failures = (root / f"{finished.id}.failures.json").read_text(encoding="utf-8")
+    assert "test_gw_account_suspended" in failures
+    assert "task-a-1" in failures
+    lessons = (tmp_path / "harnesses" / "gen-1.lessons.md").read_text(encoding="utf-8")
+    assert "test_gw_account_suspended" in lessons
+    assert "tests/test.sh" in lessons
+
+
+def test_default_improve_writes_receipt(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create(JobSubmission(task_ids=("regex-log",), max_iterations=2, patience=2))
+    root = tmp_path / "lineage"
+    finished = JobWorker(store, NullTriggerLoop(), lineage_root=root).process_one()
+    assert finished is not None
+    assert finished.status is JobStatus.COMPLETED
+    receipt = root / f"{finished.id}.improve"
+    assert receipt.read_text(encoding="utf-8") == "0->1\n"
+
+
 def test_trigger_dispatch_failure_marks_job_failed(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.create(JobSubmission(task_ids=("regex-log",)))

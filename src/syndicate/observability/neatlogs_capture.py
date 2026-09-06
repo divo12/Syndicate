@@ -1,6 +1,7 @@
 """Transient Neatlogs identity capture with one explicit workflow root."""
 
 import hashlib
+import inspect
 from contextlib import AbstractContextManager
 from enum import StrEnum
 from types import TracebackType
@@ -160,11 +161,21 @@ class NeatlogsCapture:
         self._span_refs: list[str] = []
         self._blocked = False
 
+    def _init_sdk(self) -> None:
+        kwargs: dict[str, object] = {
+            "workflow_name": self.workflow_name,
+            "register_shutdown_handlers": False,
+        }
+        try:
+            params = inspect.signature(self._sdk.init).parameters
+        except (TypeError, ValueError):
+            self._sdk.init(**kwargs)  # type: ignore[arg-type]
+            return
+        self._sdk.init(**{key: value for key, value in kwargs.items() if key in params})  # type: ignore[arg-type]
+
     def start(self) -> None:
         self._trace_ref, self._span_refs, self._blocked = None, [], False
-        self._sdk.init(
-            workflow_name=self.workflow_name, register_shutdown_handlers=False
-        )
+        self._init_sdk()
         workflow = _TrackedSpan(
             self._sdk.trace(self.workflow_name, kind="WORKFLOW"), self
         )

@@ -122,6 +122,23 @@ def test_each_prompt_variable_changes_identity(variables: PromptVariables) -> No
     assert restored.prompt_variables == VARIABLES
 
 
+def test_prompt_suffix_changes_identity_without_mutating_seed() -> None:
+    first = prepare_baseline(
+        ROOT / "harnesses/seed", ROOT / "requirements.lock", SETTINGS, VARIABLES
+    )
+    second = prepare_baseline(
+        ROOT / "harnesses/seed",
+        ROOT / "requirements.lock",
+        SETTINGS,
+        VARIABLES,
+        prompt_suffix="Fix the Okta user.",
+    )
+    assert first.prompt_suffix == ""
+    assert first.identity_hash != second.identity_hash
+    assert first.rendered_prompt in second.rendered_prompt
+    assert "Fix the Okta user." in second.rendered_prompt
+
+
 @pytest.mark.parametrize("username", ["", "agent\npolicy", "{{ date }}"])
 def test_prompt_variables_reject_template_injection(username: str) -> None:
     with pytest.raises(ValueError):

@@ -83,6 +83,27 @@ def test_infra_error_is_not_a_verified_failure(tmp_path: Path) -> None:
     assert _select(infra, infra, job, None, 0, 1) is False
 
 
+def test_equal_scores_still_ab_and_retain_incumbent(tmp_path: Path) -> None:
+    digest = f"sha256:{0:064x}"
+    lineage = HarnessLineage(tmp_path / "lineage.sqlite", digest, digest)
+    store = SqliteJobStore(tmp_path / "jobs.sqlite")
+    job = store.create(
+        JobSubmission(task_ids=("regex-log",), max_iterations=2, patience=2)
+    )
+
+    def executor(task_ids: tuple[str, ...], generation: int) -> tuple[TaskResult, ...]:
+        del generation
+        return tuple(
+            TaskResult(task_id=task_id, outcome=TaskOutcome.FAILED, reward=0.0)
+            for task_id in task_ids
+        )
+
+    receipt = run_outer_loop(job, executor=executor, lineage=lineage)
+    assert receipt.iterations[0].accepted is True
+    assert receipt.iterations[1].accepted is False
+    assert (tmp_path / "lineage.ab").read_text(encoding="utf-8") == "0->1 retain\n"
+
+
 def test_rejected_generation_is_not_used_as_incumbent(tmp_path: Path) -> None:
     digest = f"sha256:{0:064x}"
     lineage = HarnessLineage(tmp_path / "lineage.sqlite", digest, digest)

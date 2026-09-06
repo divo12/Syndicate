@@ -13,7 +13,10 @@ from harbor.models.agent.context import AgentContext
 from pydantic import SecretStr
 from test_runtime_request import request
 
-from syndicate.adapters.harbor_adapter import SyndicateNexAUAgent
+from syndicate.adapters.harbor_adapter import (
+    SyndicateNexAUAgent,
+    cap_e2b_sandbox_timeout,
+)
 from syndicate.adapters.harbor_agent import CleanupReceipt
 from syndicate.services.stock import ControllerTrialBinding, load_cleanup_receipt
 
@@ -48,6 +51,7 @@ def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
             sandbox,
             harness_dir=tmp_path / "harness",
             framework_lock=tmp_path / "lock",
+            task_id="",
         )
         lifecycle.return_value.run.assert_awaited_once_with(
             agent.request, agent.api_key
@@ -155,3 +159,9 @@ def test_stock_receipt_requires_successful_controller_run(
             receipt = load_cleanup_receipt(binding, tmp_path)
             assert receipt.cleanup == agent.cleanup_receipt
             assert receipt.written_at.utcoffset() is not None
+
+
+def test_caps_harbor_e2b_timeout_to_one_hour() -> None:
+    assert cap_e2b_sandbox_timeout(86_400) == 3600
+    assert cap_e2b_sandbox_timeout(120) == 120
+    assert cap_e2b_sandbox_timeout(None) == 3600

@@ -8,7 +8,7 @@ from syndicate.models.envelope import ArtifactKind, CommandReceipt, CommandStatu
 from syndicate.models.jobs import TaskOutcome, TaskResult
 from syndicate.models.judging import ReportStatus, RunCoverage, TaskReport
 from syndicate.repositories.artifact_store import ArtifactStore
-from syndicate.services.executors import SimulatedExecutor
+from syndicate.services.executors import HarborExecutor, SimulatedExecutor
 
 
 def run_trial_cli(arguments: list[str]) -> int:
@@ -23,11 +23,13 @@ def run_trial_cli(arguments: list[str]) -> int:
     if not parsed.task_id.strip():
         return 2
     failing = parsed.failing_task_id.strip() or None
-    print(
-        SimulatedExecutor()
-        .run((parsed.task_id,), parsed.generation, failing)[0]
-        .model_dump_json()
-    )
+    if os.environ.get("E2B_API_KEY"):
+        result = HarborExecutor().run((parsed.task_id,), parsed.generation)[0]
+    else:
+        result = SimulatedExecutor().run((parsed.task_id,), parsed.generation, failing)[
+            0
+        ]
+    print(result.model_dump_json())
     return 0
 
 

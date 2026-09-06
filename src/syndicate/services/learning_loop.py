@@ -108,14 +108,17 @@ def _select(
         and ReasonCode.COST_UNKNOWN in assessment.reason_codes
         and improved
     )
-    if assessment.decision is not ComparisonDecision.PROMOTE and not inconclusive_cost:
-        return False
-    if lineage is None:
-        return True
-    parent = f"sha256:{parent_generation:064x}"
-    child = f"sha256:{child_generation:064x}"
-    receipt = lineage.promote(uuid4(), parent, child, child)
-    return receipt.status is PromotionStatus.PROMOTED
+    promoted = (
+        assessment.decision is ComparisonDecision.PROMOTE or inconclusive_cost
+    )
+    if promoted and lineage is not None:
+        parent = f"sha256:{parent_generation:064x}"
+        child = f"sha256:{child_generation:064x}"
+        receipt = lineage.promote(uuid4(), parent, child, child)
+        promoted = receipt.status is PromotionStatus.PROMOTED
+    if lineage is not None:
+        lineage.record_ab(parent_generation, child_generation, promoted)
+    return promoted
 
 
 def run_outer_loop(
@@ -138,8 +141,9 @@ def run_outer_loop(
             return LoopReceipt(tuple(iterations), StopReason.CANCELLED, max(best, 0.0))
         results = run(job.task_ids, generation)
         score = score_of(results)
-        accepted = score > best
-        if accepted and baseline is not None:
+        if baseline is None:
+            accepted = True
+        else:
             accepted = _select(
                 baseline, results, job, lineage, incumbent_generation, generation
             )

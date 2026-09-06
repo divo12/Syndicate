@@ -90,6 +90,18 @@ class HarnessLineage:
                 current=target,
             )
 
+    def record_ab(
+        self, parent_generation: int, child_generation: int, promoted: bool
+    ) -> Path:
+        path = self._path.with_suffix(".ab")
+        decision = "promote" if promoted else "retain"
+        previous = path.read_text(encoding="utf-8") if path.is_file() else ""
+        path.write_text(
+            f"{previous}{parent_generation}->{child_generation} {decision}\n",
+            encoding="utf-8",
+        )
+        return path
+
     def history(self) -> tuple[PromotionReceipt, ...]:
         with self._connect() as connection:
             rows = connection.execute(

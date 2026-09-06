@@ -9,7 +9,12 @@ from pydantic import SecretStr
 from test_runtime_request import request as runtime_request
 
 from syndicate.controllers.handler_inputs import RuntimeInput
-from syndicate.controllers.live_handlers import _run_check
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.controllers.live_handlers import _run_check, _unverified_receipt
+from syndicate.models.jobs import TaskOutcome
+from syndicate.services.benchmark import RunOutcome, VerifierReason
+from syndicate.services.executors import task_result_from_verifier
+from syndicate.services.stock import ControllerTrialBinding
 from syndicate.controllers.preflight import dispatch
 from syndicate.models.budget import BudgetCap
 from syndicate.models.candidate import CandidateWorkspace, IncumbentSnapshot
@@ -110,3 +115,21 @@ def test_candidate_check_uses_fixed_argv_and_candidate_root(
         _run_check(workspace, "sh -c unsafe")
     with pytest.raises(ValueError, match="candidate-relative"):
         _run_check(workspace, "uv run pytest --basetemp=/tmp/x")
+
+
+def test_missing_harbor_reward_stays_unverified_not_fatal() -> None:
+    receipt = _unverified_receipt(
+        ControllerTrialBinding(
+            operation_id=UUID(int=1),
+            attempt_id=UUID(int=2),
+            run_id=UUID(int=3),
+            task_id="task-a-1",
+        ),
+        CleanupReceipt(complete=True),
+        "harbor:trial:3",
+    )
+    assert receipt.outcome is RunOutcome.UNVERIFIED
+    assert receipt.verifier.reason is VerifierReason.MISSING_RESULT
+    mapped = task_result_from_verifier("task-a-1", receipt.verifier)
+    assert mapped.outcome is TaskOutcome.INFRA_ERROR
+    assert mapped.reward == 0.0

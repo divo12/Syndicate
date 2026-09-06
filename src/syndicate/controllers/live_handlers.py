@@ -18,6 +18,7 @@ from harbor.trial.trial import Trial
 from openai import OpenAI
 from pydantic import SecretStr
 
+from syndicate.adapters.harbor_agent import CleanupReceipt
 from syndicate.adapters.harbor_adapter import SyndicateNexAUAgent
 from syndicate.controllers.handler_inputs import JudgeInput, ProposalInput, RuntimeInput
 from syndicate.models.budget import ProductRole
@@ -42,7 +43,12 @@ from syndicate.models.runtime import RuntimeRequest
 from syndicate.observability.neatlogs_readback import NeatlogsReadbackReader
 from syndicate.repositories.artifact_store import ArtifactStore
 from syndicate.repositories.benchmark_manifest import Assignment
-from syndicate.services.benchmark import RunReceipt
+from syndicate.services.benchmark import (
+    RunOutcome,
+    RunReceipt,
+    VerifierReason,
+    VerifierReceipt,
+)
 from syndicate.services.candidate import create_candidate_workspace
 from syndicate.services.evidence import EvidenceReader
 from syndicate.services.improvement import apply_proposal
@@ -123,10 +129,38 @@ async def _run_trial(
     )
     control_root = run.parent.parent
     trial.agent.bind_controller_receipt(binding, control_root)
-    result = await trial.run()
+    reference = "harbor:trial:" + str(trial.id)
+    try:
+        result = await trial.run()
+    except (OSError, RuntimeError, TimeoutError) as error:
+        try:
+            cleanup = load_cleanup_receipt(binding, control_root)
+        except FileNotFoundError:
+            raise error
+        return _unverified_receipt(binding, cleanup.cleanup, reference)
     cleanup = load_cleanup_receipt(binding, control_root)
-    return postprocess_stock_result(
-        binding, cleanup, result, "harbor:trial:" + str(trial.id), control_root
+    if result.verifier_result is None:
+        return _unverified_receipt(binding, cleanup.cleanup, reference)
+    return postprocess_stock_result(binding, cleanup, result, reference, control_root)
+
+
+def _unverified_receipt(
+    binding: ControllerTrialBinding,
+    cleanup: CleanupReceipt,
+    reference: str,
+) -> RunReceipt:
+    return RunReceipt(
+        operation_id=binding.operation_id,
+        attempt_id=binding.attempt_id,
+        run_id=binding.run_id,
+        task_id=binding.task_id,
+        cleanup=cleanup,
+        outcome=RunOutcome.UNVERIFIED,
+        verifier=VerifierReceipt(
+            outcome=RunOutcome.UNVERIFIED,
+            reason=VerifierReason.MISSING_RESULT,
+            raw_result_ref=reference,
+        ),
     )
 
 
@@ -238,7 +272,7 @@ def run(
             )
         )
     except (OSError, RuntimeError, TimeoutError) as error:
-        raise ValueError("Harbor trial did not complete") from error
+        raise ValueError(f"Harbor trial did not complete: {error}") from error
     if result.task_id != command.task_id:
         raise ValueError("Run receipt task does not match command")
     return _receipt(command, store.write(command, ArtifactKind.RUN, result))

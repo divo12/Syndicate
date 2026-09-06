@@ -11,6 +11,7 @@ from pydantic import SecretStr, ValidationError
 from test_runtime_request import request
 
 from syndicate.adapters.harbor_agent import CleanupReceipt, HarborAgent
+from syndicate.services.runtime import RuntimeStopped
 
 
 def agent() -> HarborAgent:
@@ -78,6 +79,17 @@ def test_failed_execution_or_cleanup_has_no_success_receipt(
     ):
         with pytest.raises(RuntimeError, match=str(failure)):
             asyncio.run(runner.run(request(), SecretStr("fixture")))
+
+
+def test_unsolved_agent_still_issues_cleanup() -> None:
+    runner = agent()
+    with patch(
+        "syndicate.adapters.harbor_agent.run_on_controller",
+        new_callable=AsyncMock,
+        side_effect=RuntimeStopped(None),
+    ):
+        receipt = asyncio.run(runner.run(request(), SecretStr("fixture")))
+    assert receipt == CleanupReceipt(complete=True)
 
 
 def test_wrong_cleanup_uid_is_rejected() -> None:

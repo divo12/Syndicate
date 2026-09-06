@@ -1,5 +1,6 @@
 """Claim a queued job, dispatch Trigger.dev, then run the Python learning loop."""
 
+import os
 from pathlib import Path
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from syndicate.adapters.trigger_jobs import TriggerLoop
 from syndicate.models.jobs import ExecutorKind, Job, JobStatus, StopReason
 from syndicate.repositories.jobs import JobStore
 from syndicate.services.executors import HarborExecutor, SimulatedExecutor
+from syndicate.services.failure_mine import mine_latest, write_lessons
 from syndicate.services.learning_loop import Improve, LoopReceipt, run_outer_loop
 from syndicate.services.lineage import HarnessLineage
 
@@ -53,13 +55,31 @@ class JobWorker:
             if job.executor is ExecutorKind.HARBOR
             else self._executor.run
         )
+        bump = self._improve or (lambda generation: self._bump(job.id, generation))
         return run_outer_loop(
             job,
             executor=runner,
-            improve=self._improve,
+            improve=bump,
             lineage=lineage,
             cancelled=lambda: self._cancelled(job.id),
         )
+
+    def _bump(self, job_id: UUID, generation: int) -> int:
+        nxt = generation + 1
+        artifact_root = Path(os.environ.get("ARTIFACT_ROOT", ".syndicate"))
+        mine = mine_latest(artifact_root / "runs", generation)
+        if mine.tasks:
+            write_lessons(artifact_root, nxt, mine)
+            if self._lineage_root is not None:
+                failures = self._lineage_root / f"{job_id}.failures.json"
+                failures.parent.mkdir(parents=True, exist_ok=True)
+                failures.write_text(mine.model_dump_json(indent=2), encoding="utf-8")
+        if self._lineage_root is None:
+            return nxt
+        path = self._lineage_root / f"{job_id}.improve"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{generation}->{nxt}\n", encoding="utf-8")
+        return nxt
 
     def _cancelled(self, job_id: UUID) -> bool:
         current = self._store.get(job_id)

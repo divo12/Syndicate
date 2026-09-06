@@ -21,12 +21,26 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://syndicate:syndicate@db:5432/syndicate
-      TRIGGER_SECRET_KEY: ${TRIGGER_SECRET_KEY:-}
-      TRIGGER_API_URL: ${TRIGGER_API_URL:-https://api.trigger.dev}
-      E2B_API_KEY: ${E2B_API_KEY:-}
-      SYNDICATE_HARBOR_STUB: ${SYNDICATE_HARBOR_STUB:-}
+      SYNDICATE_ENV_FILE: /app/.env
+      BENCHMARK_ROOT: /app/benchmark/ITSMBench
+      ARTIFACT_ROOT: /app/.syndicate
+      LINEAGE_ROOT: /app/.syndicate/lineage
+      HARNESS_SEED: /app/harnesses/seed
+      FRAMEWORK_LOCK: /app/requirements.lock
+      EMULATOR_TARBALL: /opt/taskgen-emulator.tgz
+      NEATLOGS_ENDPOINT: https://ingest.neatlogs.com
+      PYTHONPATH: /app/src
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./.syndicate/itsmbench:/app/benchmark/ITSMBench:ro
+      - ./.syndicate/emulator.tgz:/opt/taskgen-emulator.tgz:ro
+      - ./harnesses:/app/harnesses:ro
+      - ./requirements.lock:/app/requirements.lock:ro
+      - ./src:/app/src:ro
     ports:
       - "8000:8000"
 
