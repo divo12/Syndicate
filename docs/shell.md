@@ -2,15 +2,18 @@
 
 Use `async with ShellBinding(sandbox, timeout_ms=...)` and await
 `run_shell_command(ShellRequest(...))`. There is no implicit sandbox or host-shell
-fallback. `SandboxShell.execute`/`close` are the typed backend boundary for P08.
-The backend owns container identity, real directory/symlink confinement, bash
-process groups, positive execution deadlines and idempotent background reaping.
+fallback. P07b's `ContainerShell` implements `SandboxShell.execute`/`close` and
+owns confined cwd, bash process groups, deadlines and transient RAM capture.
+Worker8 owns that backend. Worker9/P08 owns runtime dependencies/install, task
+container identity and whole-trial UID stop confirmation, including descendants
+that escape groups, before P09 injects the verifier. Do not create a second backend.
 The binding bounds response time and invokes cleanup on timeout, cancellation,
 errors and context exit. A nonresponsive backend can still defeat cleanup;
 production backend integration must prove these obligations before H0 is sealed.
 
-`ShellResult.execution` retains raw stdout/stderr, status, exit code, PID and
-capture paths separately from model-visible content. Seed truncation preserves
+`ShellResult.execution` carries transient raw stdout/stderr, status, exit code
+and PID separately from model-visible content. P07b supplies no capture paths;
+anonymous buffers are released, with no local durable trace copy or fallback. Seed truncation preserves
 the 4M threshold, last 1000 lines/1000-column clipping, and single-line 4000 tail.
 Background capture is explicitly incomplete. Controller response timeout cannot
 claim recovered output; it records incomplete capture.
@@ -22,5 +25,6 @@ codes are not formatted as real exit codes. No extra model tools are introduced.
 
 `SYNDICATE_DOCKER_TEST=1 .venv/bin/python -m pytest tests/test_shell.py` runs a
 synthetic no-model container smoke test with an explicitly supplied test backend.
-It checks container-only execution and timeout cleanup, not Harbor lifecycle,
-background groups or protected verifier mounts (P08/P09 integration obligations).
+It checks binding dispatch and timeout cleanup. P07b's separate backend tests
+cover actual process groups and cwd checks. Harbor lifecycle, whole-UID shutdown
+and protected verifier mounts remain P08/P09 integration obligations.
