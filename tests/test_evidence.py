@@ -94,11 +94,11 @@ def setup_reader(count: int = 1) -> tuple[Remote, EvidenceReader, SpanCitation]:
     reader = EvidenceReader(
         remote,
         (
-                EvidenceGrant(
-                    link=link,
-                    trace_ref=receipt.trace_ref,
-                    expected_span_refs=tuple(span.span_id for span in receipt.spans),
-                    semantic_digest=receipt.semantic_digest,
+            EvidenceGrant(
+                link=link,
+                trace_ref=receipt.trace_ref,
+                expected_span_refs=tuple(span.span_id for span in receipt.spans),
+                semantic_digest=receipt.semantic_digest,
             ),
         ),
     )
