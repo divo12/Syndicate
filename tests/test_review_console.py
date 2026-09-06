@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from syndicate.models.comparison import PairSchedule
 from syndicate.models.evidence import SpanCitation
 from syndicate.models.improvement import (
     CandidateCheck,
@@ -22,6 +23,13 @@ from syndicate.models.judging import (
     TaskReport,
 )
 from syndicate.models.review import ReceiptSource, ReviewCampaign
+from syndicate.models.selection import (
+    ArmMetrics,
+    ComparisonAssessment,
+    ComparisonDecision,
+    ReasonCode,
+)
+from syndicate.services.review_navigation import render_finding_path
 from syndicate.services.review_render import render_campaign
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -126,3 +134,43 @@ def test_render_campaign_escapes_receipt_text() -> None:
 
     assert "&lt;script&gt;no&lt;/script&gt;" in page
     assert "<script>no</script>" not in page
+
+
+def test_render_finding_path_links_receipts_to_the_paired_comparison() -> None:
+    task_report = report()
+    candidate = manifest(task_report).model_copy(
+        update={"diff_hash": "sha256:" + "0" * 64}
+    )
+    schedule = PairSchedule(
+        campaign_id="campaign-1",
+        incumbent_harness_hash=DIGEST,
+        candidate_harness_hash="sha256:" + "f" * 64,
+        candidate_diff_hash=candidate.diff_hash,
+        pairs=(),
+    )
+    assessment = ComparisonAssessment(
+        decision=ComparisonDecision.INCONCLUSIVE,
+        incumbent=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        candidate=ArmMetrics(
+            success_rate=0.0,
+            reliability=0.0,
+            cost_per_success_microusd=None,
+            median_elapsed_ms=0.0,
+        ),
+        reason_codes=(ReasonCode.EVIDENCE_INCOMPLETE,),
+    )
+
+    page = render_finding_path(
+        task_report, candidate, schedule, assessment, ReceiptSource.SYNTHETIC
+    )
+
+    assert f"{TRACE_REF}/{SPAN_REF}" in page
+    assert "diagnosis-1" in page
+    assert candidate.diff_hash in page
+    assert "inconclusive" in page
+    assert "Synthetic preparation data" in page
