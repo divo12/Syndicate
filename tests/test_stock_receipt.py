@@ -11,9 +11,12 @@ from harbor.models.verifier.result import VerifierResult
 from syndicate.adapters.harbor_agent import CleanupReceipt
 from syndicate.services.benchmark import RunOutcome
 from syndicate.services.stock import (
+    AGENT_IMPORT,
+    AGENT_NAME,
     CleanupControlReceipt,
     ControllerTrialBinding,
-    emit_cleanup_receipt,
+    _controller_authority,
+    _write_settled_cleanup,
     load_cleanup_receipt,
     postprocess_stock_result,
 )
@@ -55,6 +58,9 @@ def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
         run_id=identity.run_id,
         task_id=identity.task_id,
         cleanup=CleanupReceipt(uid=10001, complete=True),
+        agent_import=AGENT_IMPORT,
+        agent_name=AGENT_NAME,
+        uid=10001,
         written_at=ENDED - timedelta(seconds=1),
     )
 
@@ -62,8 +68,8 @@ def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
 def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> None:
     identity = binding()
     expected = cleanup(identity)
-    receipt = emit_cleanup_receipt(
-        identity, expected.cleanup, tmp_path, expected.written_at
+    receipt = _write_settled_cleanup(
+        _controller_authority(identity, tmp_path), expected.cleanup, expected.written_at
     )
     loaded = load_cleanup_receipt(identity, tmp_path)
     terminal = postprocess_stock_result(
@@ -74,7 +80,9 @@ def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> N
     assert terminal.verifier.reward == 0.0
     assert terminal.verifier.raw_result_ref == "harbor:run"
     with pytest.raises(FileExistsError):
-        emit_cleanup_receipt(identity, expected.cleanup, tmp_path, ENDED)
+        _write_settled_cleanup(
+            _controller_authority(identity, tmp_path), expected.cleanup, ENDED
+        )
     assert load_cleanup_receipt(identity, tmp_path) == expected
     assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == ["cleanup.json"]
 
@@ -89,7 +97,9 @@ def test_failed_write_leaves_no_partial_receipt(
 
     monkeypatch.setattr("syndicate.services.stock.os.fsync", fail_sync)
     with pytest.raises(OSError, match="disk failed"):
-        emit_cleanup_receipt(identity, cleanup(identity).cleanup, tmp_path, ENDED)
+        _write_settled_cleanup(
+            _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
+        )
     assert not [p for p in tmp_path.rglob("*") if p.is_file()]
 
 
@@ -100,7 +110,7 @@ def test_rejects_cleanup_identity(field: str) -> None:
     invalid = receipt.model_copy(
         update={field: "different" if field == "task_id" else uuid4()}
     )
-    with pytest.raises(ValueError, match="identity"):
+    with pytest.raises(ValueError, match="authentic"):
         postprocess_stock_result(identity, invalid, result(identity), "harbor:run")
 
 
@@ -154,11 +164,15 @@ def test_rejects_invalid_intervals(phase: str, defect: str) -> None:
 
 def test_rejects_unsettled_cleanup_and_naive_proof(tmp_path: Path) -> None:
     identity = binding()
-    with pytest.raises(ValueError, match="Incomplete"):
-        emit_cleanup_receipt(
-            identity, CleanupReceipt(uid=10001, complete=False), tmp_path, ENDED
+    with pytest.raises(ValueError, match="settled"):
+        _write_settled_cleanup(
+            _controller_authority(identity, tmp_path),
+            CleanupReceipt(uid=10001, complete=False),
+            ENDED,
         )
     with pytest.raises(ValueError, match="timezone"):
-        emit_cleanup_receipt(
-            identity, cleanup(identity).cleanup, tmp_path, ENDED.replace(tzinfo=None)
+        _write_settled_cleanup(
+            _controller_authority(identity, tmp_path),
+            cleanup(identity).cleanup,
+            ENDED.replace(tzinfo=None),
         )

@@ -12,7 +12,11 @@ from syndicate.models.evidence import (
     RecordCitation,
     SpanCitation,
 )
-from syndicate.observability.neatlogs_capture import RunLink
+from syndicate.observability.neatlogs_capture import (
+    CaptureReceipt,
+    CaptureState,
+    RunLink,
+)
 from syndicate.observability.neatlogs_readback import (
     ExpectedTrace,
     NeatlogsReadbackReader,
@@ -72,12 +76,22 @@ def setup_reader(count: int = 1) -> tuple[Remote, EvidenceReader, SpanCitation]:
         run_id=UUID(int=1),
         task_id="task-a-1",
     )
+    spans = tuple(f"{index + 1:016x}" for index in range(count))
+    capture = CaptureReceipt(
+        link=link,
+        state=CaptureState.FLUSHED_UNVERIFIED,
+        reason="sealed",
+        trace_ref="a" * 32,
+        expected_span_refs=spans,
+        binding_digest=CaptureReceipt.digest(link, "a" * 32, spans),
+    )
     receipt = NeatlogsReadbackReceipt(
         link=link,
         trace_ref="a" * 32,
         finalized=True,
         complete=True,
         semantic_digest="sha256:" + "0" * 64,
+        binding_digest=capture.binding_digest or "",
         spans=tuple(
             ReadbackSpan(
                 span_id=f"{index + 1:016x}",
@@ -94,9 +108,7 @@ def setup_reader(count: int = 1) -> tuple[Remote, EvidenceReader, SpanCitation]:
         remote,
         (
             EvidenceGrant(
-                link=link,
-                trace_ref=receipt.trace_ref,
-                expected_span_refs=tuple(span.span_id for span in receipt.spans),
+                receipt=capture,
                 semantic_digest=receipt.semantic_digest,
             ),
         ),

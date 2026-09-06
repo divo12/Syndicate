@@ -1,11 +1,10 @@
 import pytest
 from test_judging_service import draft, generator, request
-from test_task_judge import CITE, GRANT, RUN, Remote, report
+from test_task_judge import CITE, GRANT, RUN, Remote, grant, report
 
 from syndicate.models.evidence import (
     Citation,
     CitationValidation,
-    EvidenceGrant,
     EvidenceStatus,
     RecordCitation,
     SpanQuery,
@@ -155,16 +154,13 @@ def test_blank_usage_reference_prevents_dispatch(usage_ref: str) -> None:
 
 def test_wrong_task_grant_never_dispatches() -> None:
     spec = JudgeRegistry().generate(request(), generator(draft()))
-    wrong = EvidenceGrant(
-        link=RunLink(
+    wrong = grant(
+        RunLink(
             operation_id=GRANT.link.operation_id,
             attempt_id=GRANT.link.attempt_id,
             run_id=RUN,
             task_id="task-b-1",
-        ),
-        trace_ref=GRANT.trace_ref,
-        expected_span_refs=GRANT.expected_span_refs,
-        semantic_digest=GRANT.semantic_digest,
+        )
     )
 
     def forbidden() -> JudgeAttempt:

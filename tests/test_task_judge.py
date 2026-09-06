@@ -12,7 +12,11 @@ from syndicate.models.judging import (
     ReportStatus,
     RunCoverage,
 )
-from syndicate.observability.neatlogs_capture import RunLink
+from syndicate.observability.neatlogs_capture import (
+    CaptureReceipt,
+    CaptureState,
+    RunLink,
+)
 from syndicate.observability.neatlogs_readback import (
     ExpectedTrace,
     NeatlogsReadbackReader,
@@ -28,12 +32,24 @@ SPAN = "b" * 16
 LINK = RunLink(
     task_id="task-a-1", operation_id=UUID(int=2), attempt_id=UUID(int=3), run_id=RUN
 )
-GRANT = EvidenceGrant(
-    link=LINK,
-    trace_ref=TRACE,
-    expected_span_refs=(SPAN,),
-    semantic_digest="sha256:" + "c" * 64,
-)
+
+
+def grant(link: RunLink, trace_ref: str = TRACE) -> EvidenceGrant:
+    spans = (SPAN,)
+    return EvidenceGrant(
+        receipt=CaptureReceipt(
+            link=link,
+            state=CaptureState.FLUSHED_UNVERIFIED,
+            reason="sealed",
+            trace_ref=trace_ref,
+            expected_span_refs=spans,
+            binding_digest=CaptureReceipt.digest(link, trace_ref, spans),
+        ),
+        semantic_digest="sha256:" + "c" * 64,
+    )
+
+
+GRANT = grant(LINK)
 CITE = SpanCitation(run_id=RUN, trace_ref=TRACE, span_ref=SPAN)
 
 
@@ -49,6 +65,7 @@ class Remote(NeatlogsReadbackReader):
             finalized=self.complete,
             complete=self.complete,
             semantic_digest=GRANT.semantic_digest,
+            binding_digest=GRANT.receipt.binding_digest or "",
             spans=(
                 ReadbackSpan(
                     span_id=SPAN,
@@ -138,16 +155,14 @@ def test_fabricated_or_unread_citation_is_rejected() -> None:
 
 def test_every_assigned_run_must_be_accounted_and_reward_cannot_be_overridden() -> None:
     spec = JudgeRegistry().generate(request(), generator(draft()))
-    other = EvidenceGrant(
-        link=RunLink(
+    other = grant(
+        RunLink(
             task_id="task-a-1",
             operation_id=UUID(int=4),
             attempt_id=UUID(int=5),
             run_id=UUID(int=6),
         ),
-        trace_ref="d" * 32,
-        expected_span_refs=(SPAN,),
-        semantic_digest=GRANT.semantic_digest,
+        "d" * 32,
     )
     with pytest.raises(ValueError, match="assigned runs"):
         validate_report(
@@ -172,16 +187,13 @@ def test_unread_relevant_evidence_forces_incomplete() -> None:
 
 def test_grant_from_another_task_is_rejected() -> None:
     spec = JudgeRegistry().generate(request(), generator(draft()))
-    other_task = EvidenceGrant(
-        link=RunLink(
+    other_task = grant(
+        RunLink(
             task_id="task-b-1",
             operation_id=UUID(int=2),
             attempt_id=UUID(int=3),
             run_id=RUN,
-        ),
-        trace_ref=TRACE,
-        expected_span_refs=(SPAN,),
-        semantic_digest=GRANT.semantic_digest,
+        )
     )
     with pytest.raises(ValueError, match="another task"):
         validate_report(

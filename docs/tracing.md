@@ -30,5 +30,7 @@ lock. `python -m neatlogs doctor --local --json` checks its offline envelope.
 No application or authenticated probe was run during setup; hosted trace delivery
 must be confirmed when the operator next runs the controller.
 
-Remote readback and run-link receipt contracts belong to PR25. They are not part
-of this tracing-only layer and are not claimed to validate these workflow spans.
+Remote readback accepts only a controller-sealed receipt binding the run link,
+trace ID, ordered span IDs (including the workflow root), and canonical digest.
+It validates a complete finalized trace tree without relying on span metadata or
+persisting payloads locally.

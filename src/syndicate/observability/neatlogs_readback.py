@@ -8,7 +8,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from .neatlogs_capture import RunLink
+from .neatlogs_capture import CaptureReceipt, CaptureState, RunLink
 
 NeatlogsSpanRef = NewType("NeatlogsSpanRef", str)
 
@@ -25,16 +25,32 @@ class ReadbackSpan(BaseModel):
 
 class ExpectedTrace(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-    link: RunLink
-    trace_ref: str = Field(min_length=1, max_length=200)
-    expected_span_refs: tuple[str, ...] = Field(min_length=1)
+    receipt: CaptureReceipt
 
-    @field_validator("expected_span_refs")
+    @field_validator("receipt")
     @classmethod
-    def unique_span_refs(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if len(values) != len(set(values)):
+    def sealed_receipt(cls, value: CaptureReceipt) -> CaptureReceipt:
+        if (
+            value.state is not CaptureState.FLUSHED_UNVERIFIED
+            or value.binding_digest is None
+            or value.trace_ref is None
+            or len(value.expected_span_refs) != len(set(value.expected_span_refs))
+        ):
             raise ValueError("Expected span IDs must be unique")
-        return values
+        return value
+
+    @property
+    def link(self) -> RunLink:
+        return self.receipt.link
+
+    @property
+    def trace_ref(self) -> str:
+        assert self.receipt.trace_ref is not None
+        return self.receipt.trace_ref
+
+    @property
+    def expected_span_refs(self) -> tuple[str, ...]:
+        return self.receipt.expected_span_refs
 
 
 class NeatlogsReadbackReceipt(BaseModel):
@@ -44,6 +60,7 @@ class NeatlogsReadbackReceipt(BaseModel):
     finalized: bool
     complete: bool
     semantic_digest: str
+    binding_digest: str
     spans: tuple[ReadbackSpan, ...]
 
 
@@ -73,7 +90,6 @@ class _McpV2Span(BaseModel):
     type: str
     input_value: str | None = None
     output_value: str | None = None
-    metadata: RunLink | None = None
 
 
 class _TraceContext(BaseModel):
@@ -119,13 +135,6 @@ def _valid_span_tree(context: _TraceContext, spans: tuple[ReadbackSpan, ...]) ->
         return False
     parents = {span.span_id: span.parent_span_id for span in context.spans}
     return all(_reaches_root(span.span_id, parents, ids) for span in spans)
-
-
-def _root_link(context: _TraceContext) -> RunLink | None:
-    return next(
-        (span.metadata for span in context.spans if span.parent_span_id is None),
-        None,
-    )
 
 
 class NeatlogsReadbackReader:
@@ -258,7 +267,6 @@ class NeatlogsReadbackReader:
                 len(spans) == context.span_count,
                 context.returned_span_count == context.span_count,
                 context.root_span_count == 1,
-                expected.link == _root_link(context),
                 set(expected.expected_span_refs) == {span.span_id for span in spans},
             )
         )
@@ -287,5 +295,6 @@ class NeatlogsReadbackReader:
             finalized=finalized,
             complete=complete,
             semantic_digest="sha256:" + hashlib.sha256(digest.encode()).hexdigest(),
+            binding_digest=expected.receipt.binding_digest or "",
             spans=spans,
         )

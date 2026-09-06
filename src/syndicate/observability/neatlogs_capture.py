@@ -1,5 +1,6 @@
 """Transient Neatlogs identity capture with one explicit workflow root."""
 
+import hashlib
 from contextlib import AbstractContextManager
 from enum import StrEnum
 from types import TracebackType
@@ -7,12 +8,23 @@ from typing import Protocol, cast
 from uuid import UUID
 
 import neatlogs  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
 class CaptureState(StrEnum):
     FLUSHED_UNVERIFIED = "flushed_unverified"
     BLOCKED = "blocked"
+
+
+class CorrelationAuthority(StrEnum):
+    CONTROLLER_SEALED_RECEIPT = "controller_sealed_receipt"
 
 
 class RunLink(BaseModel):
@@ -30,6 +42,41 @@ class CaptureReceipt(BaseModel):
     reason: str
     trace_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     expected_span_refs: tuple[str, ...] = ()
+    authority: CorrelationAuthority = CorrelationAuthority.CONTROLLER_SEALED_RECEIPT
+    binding_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_seal(self) -> "CaptureReceipt":
+        valid = (
+            self.state is CaptureState.FLUSHED_UNVERIFIED
+            and self.trace_ref is not None
+            and bool(self.expected_span_refs)
+        )
+        if valid != (self.binding_digest is not None):
+            raise ValueError("Capture receipt seal does not match its state")
+        trace_ref = self.trace_ref
+        if trace_ref is None:
+            return self
+        if self.binding_digest is not None and self.binding_digest != self.digest(
+            self.link, trace_ref, self.expected_span_refs
+        ):
+            raise ValueError("Capture receipt binding digest is invalid")
+        return self
+
+    @staticmethod
+    def digest(link: RunLink, trace_ref: str, spans: tuple[str, ...]) -> str:
+        content = "\x1f".join(
+            (
+                str(link.operation_id),
+                str(link.attempt_id),
+                str(link.run_id),
+                link.task_id,
+                trace_ref,
+                *spans,
+                CorrelationAuthority.CONTROLLER_SEALED_RECEIPT,
+            )
+        )
+        return "sha256:" + hashlib.sha256(content.encode()).hexdigest()
 
 
 class RedactionPolicy(BaseModel):
@@ -157,6 +204,9 @@ class NeatlogsCapture:
             reason="Neatlogs flush completed; persisted readback required",
             trace_ref=self._trace_ref,
             expected_span_refs=tuple(self._span_refs),
+            binding_digest=CaptureReceipt.digest(
+                link, self._trace_ref, tuple(self._span_refs)
+            ),
         )
 
     def shutdown(self) -> None:

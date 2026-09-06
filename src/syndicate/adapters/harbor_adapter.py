@@ -17,7 +17,12 @@ from pydantic import SecretStr
 
 from syndicate.adapters.harbor_agent import CleanupReceipt, HarborAgent
 from syndicate.models.runtime import RuntimeRequest
-from syndicate.services.stock import ControllerTrialBinding, emit_cleanup_receipt
+from syndicate.services.stock import (
+    ControllerTrialBinding,
+    _controller_authority,
+    _ControllerAuthority,
+    _write_settled_cleanup,
+)
 
 HARNESS_SOURCE = Path(__file__).parents[3] / "harnesses/seed"
 FRAMEWORK_LOCK = Path(__file__).parents[3] / "requirements.lock"
@@ -65,8 +70,7 @@ class SyndicateNexAUAgent(BaseAgent):
         self.harness_dir = harness_dir
         self.framework_lock = framework_lock
         self.cleanup_receipt: CleanupReceipt | None = None
-        self._controller_binding: ControllerTrialBinding | None = None
-        self._controller_root: Path | None = None
+        self._controller_authority: _ControllerAuthority | None = None
 
     @staticmethod
     @override
@@ -119,17 +123,13 @@ class SyndicateNexAUAgent(BaseAgent):
             raise RuntimeError(
                 "Controller run failed; verifier handoff blocked"
             ) from None
-        if self._controller_binding is not None and self._controller_root is not None:
-            emit_cleanup_receipt(
-                self._controller_binding,
-                self.cleanup_receipt,
-                self._controller_root,
-                datetime.now(UTC),
+        if self._controller_authority is not None:
+            _write_settled_cleanup(
+                self._controller_authority, self.cleanup_receipt, datetime.now(UTC)
             )
 
     def bind_controller_receipt(
         self, binding: ControllerTrialBinding, controller_root: Path
     ) -> None:
         """Bind controller identity before Harbor starts this agent."""
-        self._controller_binding = binding
-        self._controller_root = controller_root
+        self._controller_authority = _controller_authority(binding, controller_root)
