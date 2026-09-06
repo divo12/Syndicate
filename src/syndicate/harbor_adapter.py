@@ -1,5 +1,6 @@
 """Run NexAU on the controller against Harbor's existing E2B task sandbox."""
 
+import asyncio
 import shlex
 from datetime import UTC, datetime
 from logging import Logger
@@ -106,11 +107,18 @@ class SyndicateNexAUAgent(BaseAgent):
         self.cleanup_receipt = None
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
-        self.cleanup_receipt = await HarborAgent(
-            _sandbox(environment),
-            harness_dir=self.harness_dir,
-            framework_lock=self.framework_lock,
-        ).run(self.request, self.api_key)
+        try:
+            self.cleanup_receipt = await HarborAgent(
+                _sandbox(environment),
+                harness_dir=self.harness_dir,
+                framework_lock=self.framework_lock,
+            ).run(self.request, self.api_key)
+        except (Exception, asyncio.CancelledError):
+            # Stock Harbor catches timeout/installed-agent exit errors and continues
+            # to verification. This adapter requires successful cleanup handoff.
+            raise RuntimeError(
+                "Controller run failed; verifier handoff blocked"
+            ) from None
         if self._controller_binding is not None and self._controller_root is not None:
             emit_cleanup_receipt(
                 self._controller_binding,

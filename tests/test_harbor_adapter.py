@@ -100,6 +100,32 @@ def test_requires_started_e2b_environment(tmp_path: Path, started: bool) -> None
         asyncio.run(agent.setup(environment))
 
 
+def test_harbor_deadline_aborts_instead_of_becoming_verifier_eligible(
+    tmp_path: Path,
+) -> None:
+    environment = create_autospec(E2BEnvironment, instance=True)
+    environment._sandbox = create_autospec(AsyncSandbox, instance=True)
+    agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
+
+    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+
+        async def run_controller(*args: object) -> CleanupReceipt:
+            await asyncio.sleep(10)
+            return CleanupReceipt(complete=True)
+
+        lifecycle.return_value.run = run_controller
+
+        async def exercise() -> None:
+            with pytest.raises(RuntimeError, match="handoff blocked"):
+                await asyncio.wait_for(
+                    agent.run(agent.request.instruction, environment, AgentContext()),
+                    0.01,
+                )
+
+        asyncio.run(exercise())
+    assert agent.cleanup_receipt is None
+
+
 @pytest.mark.parametrize("failed", [False, True])
 def test_stock_receipt_requires_successful_controller_run(
     tmp_path: Path, failed: bool
@@ -121,7 +147,7 @@ def test_stock_receipt_requires_successful_controller_run(
         )
         execution = agent.run(agent.request.instruction, environment, AgentContext())
         if failed:
-            with pytest.raises(RuntimeError, match="controller failed"):
+            with pytest.raises(RuntimeError, match="handoff blocked"):
                 asyncio.run(execution)
             assert not tuple(tmp_path.rglob("cleanup.json"))
         else:
