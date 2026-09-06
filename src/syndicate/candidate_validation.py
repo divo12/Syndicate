@@ -39,6 +39,11 @@ def seal_candidate(workspace: CandidateWorkspace) -> CandidateSeal:
     _validate_candidate_paths(confirmed_paths, allowed_paths)
     if confirmed_paths != candidate_paths:
         raise CandidateValidationError("candidate changed during sealing")
+    if (
+        _snapshot_candidate_files(workspace.candidate_root, confirmed_paths)
+        != candidate_files
+    ):
+        raise CandidateValidationError("candidate changed during sealing")
     changed = tuple(
         path.as_posix()
         for path in workspace.allowed_paths

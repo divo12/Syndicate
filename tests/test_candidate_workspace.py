@@ -109,7 +109,7 @@ def test_seal_rechecks_for_symlinks_after_initial_scan(
         seal_candidate(workspace)
 
 
-def test_seal_reuses_one_candidate_content_snapshot(
+def test_seal_rejects_changed_content_during_recheck(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = create_candidate_workspace(
@@ -124,10 +124,10 @@ def test_seal_reuses_one_candidate_content_snapshot(
 
     monkeypatch.setattr(candidate_validation, "_read_candidate_file", changing_read)
 
-    seal = seal_candidate(workspace)
+    with pytest.raises(CandidateValidationError, match="changed"):
+        seal_candidate(workspace)
 
-    assert reads == ["prompt.md"]
-    assert seal.changed_paths == ("prompt.md",)
+    assert reads == ["prompt.md", "prompt.md"]
 
 
 def test_seal_rechecks_the_tree_after_capturing_content(
@@ -148,4 +148,28 @@ def test_seal_rechecks_the_tree_after_capturing_content(
     )
 
     with pytest.raises(CandidateValidationError, match="protected"):
+        seal_candidate(workspace)
+
+
+def test_seal_rechecks_content_after_capturing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    original_files = candidate_validation._candidate_files
+    scans = 0
+
+    def change_file_on_second_scan(root: Path) -> tuple[str, ...]:
+        nonlocal scans
+        scans += 1
+        if scans == 2:
+            root.joinpath("prompt.md").write_text("changed", encoding="utf-8")
+        return original_files(root)
+
+    monkeypatch.setattr(
+        candidate_validation, "_candidate_files", change_file_on_second_scan
+    )
+
+    with pytest.raises(CandidateValidationError, match="changed"):
         seal_candidate(workspace)
