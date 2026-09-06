@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { controllerWorkflow } from "../src/trigger/experiment.js";
+import { improveHarness, learningLoop, runTrial } from "../src/trigger/learning.js";
 import triggerConfig from "../trigger.config.js";
 
 const ROOT = process.cwd();
@@ -26,6 +27,9 @@ test("controller workflow task is exported from src/trigger via the SDK task hel
   assert.doesNotMatch(source, /defineJob/);
   assert.doesNotMatch(source, /node-fetch/);
   assert.equal(controllerWorkflow.id, "controller-workflow");
+  assert.equal(learningLoop.id, "learning-loop");
+  assert.equal(runTrial.id, "run-trial");
+  assert.equal(improveHarness.id, "improve-harness");
 });
 
 test("tsconfig and gitignore cover the official Trigger layout", async () => {
@@ -49,7 +53,10 @@ test("package pins the latest SDK and build packages without a v3 import", async
   assert.equal(pkg.devDependencies["@trigger.dev/build"], "4.5.16");
   const files = [
     "src/trigger/experiment.ts",
+    "src/trigger/learning.ts",
+    "src/trigger/loop.ts",
     "src/trigger/transport.ts",
+    "src/trigger/trial.ts",
     "src/trigger/workflow.ts",
     "trigger.config.ts",
   ];

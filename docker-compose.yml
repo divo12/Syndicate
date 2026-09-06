@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: syndicate
+      POSTGRES_PASSWORD: syndicate
+      POSTGRES_DB: syndicate
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syndicate"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://syndicate:syndicate@db:5432/syndicate
+      TRIGGER_SECRET_KEY: ${TRIGGER_SECRET_KEY:-}
+      TRIGGER_API_URL: ${TRIGGER_API_URL:-https://api.trigger.dev}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

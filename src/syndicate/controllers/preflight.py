@@ -245,11 +245,16 @@ def main(arguments: list[str]) -> int:
     if arguments == ["--help"]:
         print("Usage: python -m syndicate.cli preflight --config CAMPAIGN_JSON")
         print("Internal transport: execute --request ABSOLUTE_REQUEST_JSON")
+        print("Trial: python -m syndicate.cli trial --task-id ID --generation N")
         return 0
     if arguments == ["export-schema"]:
         root = Path.cwd().resolve() / ".syndicate"
         print(export_schemas(root).model_dump_json())
         return 0
+    if arguments[:1] == ["trial"]:
+        from syndicate.services.trial_commands import run_trial_cli
+
+        return run_trial_cli(arguments[1:])
     receipt, exit_code = dispatch(arguments)
     if receipt.error:
         print(receipt.error.reason.value, file=sys.stderr)
