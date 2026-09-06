@@ -160,38 +160,44 @@ def execute_pure(
     if command.content_hash not in controller.approved_request_hashes:
         raise ValueError("Controller did not approve this command request")
     store = ArtifactStore(root)
-    if isinstance(command, RunTrialCommand):
-        from syndicate.controllers.live_handlers import LiveHandlers, run
+    if isinstance(command, RunTrialCommand | JudgeTaskCommand | ProposeHarnessCommand):
+        return _execute_live(command, store, controller, handlers)
+    return _execute_nonlive(command, store)
 
+
+def _execute_live(
+    command: RunTrialCommand | JudgeTaskCommand | ProposeHarnessCommand,
+    store: ArtifactStore,
+    controller: ControllerConfig,
+    handlers: LiveHandlers | None,
+) -> CommandReceipt:
+    from syndicate.controllers.live_handlers import LiveHandlers, judge, propose, run
+
+    active_handlers = handlers or LiveHandlers()
+    key = load_model_config(controller.env_file).api_key
+    if isinstance(command, RunTrialCommand):
         _admit_budget(command, controller, ProductRole.EXECUTOR)
         return run(
             command,
             store,
-            load_model_config(controller.env_file).api_key,
-            handlers or LiveHandlers(),
+            key,
+            active_handlers,
             controller.benchmark_root,
             controller.assignments,
         )
     if isinstance(command, JudgeTaskCommand):
-        from syndicate.controllers.live_handlers import LiveHandlers, judge
-
         _admit_budget(command, controller, ProductRole.TASK_JUDGE)
         return judge(
             command,
             store,
-            load_model_config(controller.env_file).api_key,
-            handlers or LiveHandlers(),
+            key,
+            active_handlers,
         )
-    if isinstance(command, ProposeHarnessCommand):
-        from syndicate.controllers.live_handlers import LiveHandlers, propose
+    _admit_budget(command, controller, ProductRole.IMPROVEMENT_AGENT)
+    return propose(command, store, key, active_handlers)
 
-        _admit_budget(command, controller, ProductRole.IMPROVEMENT_AGENT)
-        return propose(
-            command,
-            store,
-            load_model_config(controller.env_file).api_key,
-            handlers or LiveHandlers(),
-        )
+
+def _execute_nonlive(command: CommandRequest, store: ArtifactStore) -> CommandReceipt:
     if isinstance(command, CollectReportsCommand):
         return collect(command, store)
     if isinstance(command, CompareHarnessCommand):
