@@ -48,3 +48,8 @@ select = ["E", "F", "I", "UP", "B", "ANN"]
 
 [dependency-groups]
 build = ["hatchling==1.27.0", "editables==0.5"]
+
+[[tool.mypy.overrides]]
+module = ["harbor.*", "nexau.*"]
+follow_untyped_imports = true
+follow_imports = "silent"
