@@ -87,6 +87,23 @@ test("terminates an owned process group at its deadline", async () => {
   );
 });
 
+test("cancels an already-aborted invocation", async () => {
+  const input = await fixture("slow");
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    invokePython({
+      ...input,
+      operationId: OPERATION_ID,
+      attemptId: ATTEMPT_ID,
+      timeoutMs: 1_000,
+      environment: { PATH: process.env.PATH ?? "" },
+      signal: controller.signal,
+    }),
+    /cancellation/,
+  );
+});
+
 test("refuses a request outside its controller-owned run directory", async () => {
   const input = await fixture("ok");
   const requestPath = join(input.controllerCwd, "outside.json");
