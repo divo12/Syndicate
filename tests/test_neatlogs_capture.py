@@ -9,6 +9,7 @@ from uuid import UUID
 from syndicate.observability.neatlogs_capture import (
     CaptureState,
     NeatlogsCapture,
+    RedactionPolicy,
     RunLink,
     SdkSpan,
 )
@@ -20,12 +21,16 @@ class Context:
     span_id: int
 
 
-@dataclass(frozen=True)
+@dataclass
 class Span:
     context: Context
+    attributes: list[tuple[str, str | bool | int]]
 
     def get_span_context(self) -> Context:
         return self.context
+
+    def set_attribute(self, key: str, value: str | bool | int) -> None:
+        self.attributes.append((key, value))
 
 
 class SpanManager(AbstractContextManager[Span]):
@@ -76,13 +81,35 @@ def link() -> RunLink:
     )
 
 
+def policy() -> RedactionPolicy:
+    from pydantic import SecretStr
+
+    return RedactionPolicy(secrets=(SecretStr("secret"),))
+
+
+def captured_span(
+    capture: NeatlogsCapture, name: str
+) -> AbstractContextManager[SdkSpan]:
+    return capture.span(
+        link(),
+        name,
+        "provider secret",
+        "provider secret output",
+        "model secret",
+        "model secret output",
+        policy(),
+    )
+
+
 def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
-    sdk = Sdk((Span(Context(1, 2)), Span(Context(1, 3)), Span(Context(1, 4))))
+    sdk = Sdk(
+        (Span(Context(1, 2), []), Span(Context(1, 3), []), Span(Context(1, 4), []))
+    )
     capture = NeatlogsCapture("test", sdk)
     capture.start()
-    with capture.span(link(), "first"):
+    with captured_span(capture, "first"):
         pass
-    with capture.span(link(), "second"):
+    with captured_span(capture, "second"):
         pass
     receipt = capture.flush(link())
     assert receipt.state is CaptureState.FLUSHED_UNVERIFIED
@@ -96,26 +123,47 @@ def test_flush_receipt_has_remote_identity_in_emission_order() -> None:
 
 
 def test_failed_flush_blocks_receipt() -> None:
-    sdk = Sdk((Span(Context(1, 2)), Span(Context(1, 3))))
+    sdk = Sdk((Span(Context(1, 2), []), Span(Context(1, 3), [])))
     sdk.flush = lambda: False  # type: ignore[method-assign]
     capture = NeatlogsCapture("test", sdk)
     capture.start()
-    with capture.span(link(), "tool"):
+    with captured_span(capture, "tool"):
         pass
     assert capture.flush(link()).state is CaptureState.BLOCKED
 
 
 def test_mixed_duplicate_or_missing_identity_blocks_without_flush() -> None:
     for spans in (
-        (Span(Context(1, 2)), Span(Context(2, 3)), Span(Context(2, 4))),
-        (Span(Context(1, 2)), Span(Context(1, 2)), Span(Context(1, 3))),
-        (Span(Context(0, 2)), Span(Context(0, 3))),
+        (Span(Context(1, 2), []), Span(Context(2, 3), []), Span(Context(2, 4), [])),
+        (Span(Context(1, 2), []), Span(Context(1, 2), []), Span(Context(1, 3), [])),
+        (Span(Context(0, 2), []), Span(Context(0, 3), [])),
     ):
         sdk = Sdk(spans)
         capture = NeatlogsCapture("test", sdk)
         capture.start()
         for index in range(len(spans) - 1):
-            with capture.span(link(), str(index)):
+            with captured_span(capture, str(index)):
                 pass
         assert capture.flush(link()).state is CaptureState.BLOCKED
         assert not sdk.flushed
+
+
+def test_sdk_receives_only_redacted_and_distinct_evidence() -> None:
+    span = Span(Context(1, 3), [])
+    capture = NeatlogsCapture("test", Sdk((Span(Context(1, 2), []), span)))
+    capture.start()
+    with captured_span(capture, "redacted"):
+        pass
+    values = tuple(value for _, value in span.attributes if isinstance(value, str))
+    assert "secret" not in " ".join(values)
+    assert values[:2] == ("model [REDACTED]", "model [REDACTED] output")
+
+
+def test_secret_free_evidence_is_valid() -> None:
+    span = Span(Context(1, 3), [])
+    capture = NeatlogsCapture("test", Sdk((Span(Context(1, 2), []), span)))
+    capture.start()
+    clean = RedactionPolicy(secrets=(__import__("pydantic").SecretStr("secret"),))
+    with capture.span(link(), "clean", "provider", "output", "model", "result", clean):
+        pass
+    assert capture.flush(link()).state is CaptureState.FLUSHED_UNVERIFIED
