@@ -11,7 +11,7 @@ from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.nexau_runtime import RuntimeStopped, run_in_container
-from syndicate.runtime_contracts import RuntimeExit, RuntimeRequest
+from syndicate.runtime_contracts import RuntimeRequest
 
 
 def respond(request: httpx.Request, calls: list[bytes]) -> httpx.Response:
@@ -91,10 +91,6 @@ def test_iteration_limit_is_explicit() -> None:
             runner.run(run_in_container(request, SecretStr("fixture")))
     assert stopped.value.reason is AgentStopReason.MAX_ITERATIONS_REACHED
     assert not calls
-    receipt = RuntimeExit.model_validate_json(
-        Path("/logs/agent/runtime-exit.json").read_bytes()
-    )
-    assert receipt.stop_reason is AgentStopReason.MAX_ITERATIONS_REACHED
 
 
 @pytest.mark.skipif(os.getuid() != 10001, reason="dedicated runtime container required")
@@ -105,13 +101,9 @@ def test_real_nexau_tool_cycle_without_model() -> None:
         asyncio.Runner() as runner,
     ):
         result = runner.run(run_in_container(request, SecretStr("fixture")))
-    receipt = RuntimeExit.model_validate_json(
-        Path("/logs/agent/runtime-exit.json").read_bytes()
-    )
-    assert receipt.final_response == result == "Completed."
+    assert result == "Completed."
     assert len(calls) == 3
     assert all(b"gpt-5.4-mini" in call for call in calls)
     assert b"Background task started" in calls[1]
     assert b"shell-ok" in calls[2]
-    assert Path("/logs/agent/nexau-trace.json").stat().st_size > 0
-    assert "shell-ok" in Path("/logs/agent/shell-results.jsonl").read_text()
+    assert not tuple(Path("/logs/agent").iterdir())
