@@ -1,6 +1,8 @@
 """Thin controller adapters for runtime, judging, and improvement services."""
 
 import asyncio
+import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -97,8 +99,24 @@ def _propose(input: ProposalInput, key: SecretStr) -> str:
 
 
 def _run_check(workspace: CandidateWorkspace, command: str) -> bool:
-    del workspace, command
-    raise RuntimeError("Candidate check sandbox is not attached to this controller")
+    arguments = tuple(shlex.split(command))
+    if arguments[:3] != ("uv", "run", "pytest") or not arguments[3:]:
+        raise ValueError("Candidate checks must be an explicit uv run pytest command")
+    if any(path.startswith("/") or ".." in Path(path).parts for path in arguments[3:]):
+        raise ValueError("Candidate checks must use candidate-relative paths")
+    try:
+        result = subprocess.run(
+            arguments,
+            cwd=workspace.candidate_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 @dataclass(frozen=True, slots=True)
