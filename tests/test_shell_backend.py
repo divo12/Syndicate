@@ -133,6 +133,30 @@ def test_cleanup_failure_blocks_verifier() -> None:
     assert not shell.cleanup_complete
 
 
+def test_disconnect_failure_still_attempts_uid_cleanup() -> None:
+    sandbox, handle = transport()
+    handle.disconnect.side_effect = RuntimeError("disconnect failed")
+    sandbox.commands.run.side_effect = None
+
+    async def run() -> None:
+        shell = E2BShell(sandbox, "/work")
+
+        async def started() -> AsyncCommandHandle:
+            return handle
+
+        spawn = asyncio.create_task(started())
+        shell.spawns.add(spawn)
+        await spawn
+        with pytest.raises(RuntimeError, match="disconnect failed"):
+            await shell.close()
+        assert not shell.cleanup_complete
+        sandbox.commands.run.assert_awaited_once_with(
+            "pkill -KILL -u 10001 || test $? = 1", user="root", timeout=5
+        )
+
+    asyncio.run(run())
+
+
 def test_close_waits_for_inflight_startup() -> None:
     sandbox, handle = transport()
 
