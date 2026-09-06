@@ -175,10 +175,12 @@ class E2BShell:
         for waiter in pending:
             waiter.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        for handle in started:
-            if isinstance(handle, AsyncCommandHandle):
-                await handle.disconnect()
-        await self._kill_owned()
+        try:
+            for handle in started:
+                if isinstance(handle, AsyncCommandHandle):
+                    await handle.disconnect()
+        finally:
+            await self._kill_owned()
         for _ in range(20):
             try:
                 await self.sandbox.commands.run(
