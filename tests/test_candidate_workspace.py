@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from syndicate.candidate_validation import CandidateValidationError, seal_candidate
 from syndicate.candidate_workspace import create_candidate_workspace
 
 
@@ -48,3 +49,37 @@ def test_snapshot_rejects_a_symlinked_incumbent_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="symlink"):
         create_candidate_workspace(linked_root, ("prompt.md",), tmp_path / "workspaces")
+
+
+def test_seal_hashes_an_allowlisted_candidate_diff(tmp_path: Path) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    workspace.candidate_root.joinpath("prompt.md").write_text("candidate")
+
+    first = seal_candidate(workspace)
+    second = seal_candidate(workspace)
+
+    assert first == second
+    assert first.parent_hash == workspace.incumbent.content_hash
+    assert first.changed_paths == ("prompt.md",)
+    assert len(first.candidate_hash) == 64
+    assert len(first.diff_hash) == 64
+
+
+@pytest.mark.parametrize("attack", ["protected.py", "nested/link.md"])
+def test_seal_rejects_protected_paths_and_symlink_traversal(
+    tmp_path: Path, attack: str
+) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    target = workspace.candidate_root / attack
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if attack == "nested/link.md":
+        target.symlink_to(workspace.snapshot_root / "prompt.md")
+    else:
+        target.write_text("protected edit")
+
+    with pytest.raises(CandidateValidationError):
+        seal_candidate(workspace)
