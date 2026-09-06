@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { TransportError, invokePython } from "../trigger/transport.js";
+import { TransportError, invokePython } from "../src/trigger/transport.js";
 
 const OPERATION_ID = "11111111-1111-4111-8111-111111111111";
 const ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
