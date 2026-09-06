@@ -59,6 +59,8 @@ class ArtifactKind(StrEnum):
     MEASUREMENTS = "measurements"
     ASSESSMENT = "assessment"
     LINEAGE = "lineage"
+    COLLECTION = "collection"
+    PROMOTION = "promotion"
 
 
 class ArtifactRef(WireModel):
