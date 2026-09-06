@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from uuid import UUID
 
-from nexau import Tool  # type: ignore[import-untyped]
+from nexau import Tool
 from pydantic import BaseModel, ConfigDict, Field
 
 from syndicate.evidence_contracts import SpanQuery, TraceQuery
