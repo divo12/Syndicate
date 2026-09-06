@@ -45,6 +45,16 @@ class EvidenceGrant(EvidenceModel):
     semantic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class RunEvidenceGrant(EvidenceModel):
+    """Controller allowlist for one opaque record aligned to a trusted run."""
+
+    operation_id: UUID
+    attempt_id: UUID
+    run_id: UUID
+    task_id: str = Field(min_length=1)
+    record_ref: str = Field(min_length=1, max_length=200)
+
+
 class CitationValidation(EvidenceModel):
     status: EvidenceStatus
     complete: bool
