@@ -96,6 +96,38 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _reaches_root(
+    start: str, parents: dict[str, str | None], known_ids: set[str]
+) -> bool:
+    seen: set[str] = set()
+    current: str | None = start
+    while current is not None:
+        if current in seen:
+            return False
+        seen.add(current)
+        parent = parents.get(current)
+        if parent is not None and parent not in known_ids:
+            return False
+        current = parent
+    return True
+
+
+def _valid_span_tree(context: _TraceContext, spans: tuple[ReadbackSpan, ...]) -> bool:
+    ids = {span.span_id for span in spans}
+    roots = [span for span in context.spans if span.parent_span_id is None]
+    if len(roots) != 1 or len(ids) != len(spans):
+        return False
+    parents = {span.span_id: span.parent_span_id for span in context.spans}
+    return all(_reaches_root(span.span_id, parents, ids) for span in spans)
+
+
+def _root_link(context: _TraceContext) -> RunLink | None:
+    return next(
+        (span.metadata for span in context.spans if span.parent_span_id is None),
+        None,
+    )
+
+
 class NeatlogsReadbackReader:
     """Transient MCP reader; it never stores trajectory payloads."""
 
@@ -217,39 +249,16 @@ class NeatlogsReadbackReader:
         spans: tuple[ReadbackSpan, ...],
         finalized: bool,
     ) -> bool:
-        ids = {span.span_id for span in spans}
-        roots = [span for span in context.spans if span.parent_span_id is None]
-        if len(roots) != 1 or len(ids) != len(spans):
-            return False
-        parents = {span.span_id: span.parent_span_id for span in context.spans}
-        for span in spans:
-            seen: set[str] = set()
-            current: str | None = span.span_id
-            while current is not None:
-                if current in seen:
-                    return False
-                seen.add(current)
-                parent = parents.get(current)
-                if parent is not None and parent not in ids:
-                    return False
-                current = parent
         return all(
             (
+                _valid_span_tree(context, spans),
                 context.trace_id == expected.trace_ref,
                 finalized,
                 not context.truncated,
                 len(spans) == context.span_count,
                 context.returned_span_count == context.span_count,
                 context.root_span_count == 1,
-                expected.link
-                == next(
-                    (
-                        span.metadata
-                        for span in context.spans
-                        if span.parent_span_id is None
-                    ),
-                    None,
-                ),
+                expected.link == _root_link(context),
                 set(expected.expected_span_refs) == {span.span_id for span in spans},
             )
         )
