@@ -124,18 +124,18 @@ def _task(root: Path, revision: str, assignment: Assignment) -> TaskManifest:
     if version != "1.3":
         raise ValueError("Unsupported task schema version")
     return TaskManifest(
-        assignment,
-        task_ref,
-        _ref(root, revision, f"{relative}/instruction.md", "100644"),
-        _ref(root, revision, f"{relative}/environment", "040000"),
-        _ref(root, revision, f"{relative}/tests", "040000"),
-        _ref(root, revision, f"{relative}/solution", "040000"),
-        version,
-        _text(_table(metadata.get("task")), "name"),
-        _text(_table(metadata.get("environment")), "docker_image"),
-        _timeout(metadata, "agent", "timeout_sec"),
-        _timeout(metadata, "verifier", "timeout_sec"),
-        _timeout(metadata, "environment", "build_timeout_sec"),
+        assignment=assignment,
+        task_ref=task_ref,
+        instruction_ref=_ref(root, revision, f"{relative}/instruction.md", "100644"),
+        environment_ref=_ref(root, revision, f"{relative}/environment", "040000"),
+        verifier_ref=_ref(root, revision, f"{relative}/tests", "040000"),
+        solution_ref=_ref(root, revision, f"{relative}/solution", "040000"),
+        schema_version=version,
+        name=_text(_table(metadata.get("task")), "name"),
+        docker_image=_text(_table(metadata.get("environment")), "docker_image"),
+        agent_timeout_sec=_timeout(metadata, "agent", "timeout_sec"),
+        verifier_timeout_sec=_timeout(metadata, "verifier", "timeout_sec"),
+        build_timeout_sec=_timeout(metadata, "environment", "build_timeout_sec"),
     )
 
 
@@ -201,24 +201,28 @@ class BenchmarkManifest:
         tasks = tuple(_task(root, revision, item) for item in assignments)
         return cls(root, revision, tasks)
 
+    def _validate_source(self) -> None:
+        """Recheck the checkout and records before exposing any instructions."""
+        _validate_assignments(tuple(task.assignment for task in self.tasks))
+        _check_checkout(self.root, self.revision)
+        for task in self.tasks:
+            if task != _task(self.root, self.revision, task.assignment):
+                raise ValueError("Task manifest does not match pinned source")
+
     def public_inputs(self, split: Split) -> tuple[PublicTaskInput, ...]:
         """Pre-selection projection; final-test execution needs a controller gate."""
         if not isinstance(split, Split):
             raise ValueError("Explicit Split required")
         if split == Split.FINAL_TEST:
             raise ValueError("Locked final-test tasks unavailable before selection")
-        _validate_assignments(tuple(task.assignment for task in self.tasks))
-        _check_checkout(self.root, self.revision)
-        for task in self.tasks:
-            if task != _task(self.root, self.revision, task.assignment):
-                raise ValueError("Task manifest does not match pinned source")
+        self._validate_source()
         return tuple(
             PublicTaskInput(
-                task.assignment.task_id,
-                split,
-                self.revision,
-                task.instruction_ref,
-                _git(self.root, "show", task.instruction_ref),
+                task_id=task.assignment.task_id,
+                split=split,
+                benchmark_revision=self.revision,
+                instruction_ref=task.instruction_ref,
+                instruction=_git(self.root, "show", task.instruction_ref),
             )
             for task in self.tasks
             if task.assignment.split == split

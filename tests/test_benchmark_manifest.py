@@ -6,7 +6,32 @@ from unittest.mock import patch
 
 import pytest
 
-from syndicate.benchmark_manifest import Assignment, BenchmarkManifest, Split
+from syndicate.benchmark_manifest import (
+    ITSMBENCH_REVISION,
+    Assignment,
+    BenchmarkManifest,
+    Split,
+)
+
+
+def test_bundled_benchmark() -> None:
+    root = Path(__file__).resolve().parents[1] / "benchmark" / "ITSMBench"
+    assert (root / ".git").exists(), (
+        "Run git submodule update --init benchmark/ITSMBench"
+    )
+    manifest = BenchmarkManifest.load(
+        root,
+        ITSMBENCH_REVISION,
+        (Assignment("task-a-1", Split.DEVELOPMENT, "a"),),
+    )
+    task = manifest.tasks[0]
+    assert task.schema_version == "1.3"
+    assert task.agent_timeout_sec == 1500
+    public = manifest.public_inputs(Split.DEVELOPMENT)
+    assert len(public) == 1
+    assert public[0].task_id == "task-a-1"
+    assert public[0].instruction.strip()
+    assert public[0].benchmark_revision == ITSMBENCH_REVISION
 
 
 def git(root: Path, *args: str) -> str:
