@@ -1,192 +1,180 @@
-"""Run inside an unprivileged Linux container for actual subprocess coverage."""
+"""E2B transport, capture bounds, and controller-owned cleanup without cloud calls."""
 
 import asyncio
-import os
-from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from e2b import AsyncSandbox
+from e2b.sandbox.commands.command_handle import CommandExitException, CommandResult
+from e2b.sandbox_async.commands.command_handle import AsyncCommandHandle
 
 from syndicate.shell import ShellRequest, ShellStatus
-from syndicate.shell_backend import ContainerShell
-
-CONTAINER_USER = Path("/.dockerenv").is_file() and os.getuid() != 0
-container_only = pytest.mark.skipif(
-    not CONTAINER_USER, reason="unprivileged container required"
-)
+from syndicate.shell_backend import CaptureLimitError, E2BShell, _Capture
 
 
-def test_host_or_root_refused(tmp_path: Path) -> None:
-    if CONTAINER_USER:
-        pytest.skip("guard exercised on host/root")
-    with pytest.raises(RuntimeError, match="unprivileged"):
-        ContainerShell(tmp_path)
+def transport() -> tuple[Mock, AsyncMock]:
+    sandbox = Mock(spec=AsyncSandbox)
+    handle = AsyncMock(spec=AsyncCommandHandle)
+    handle.pid = 42
+    handle.wait.return_value = CommandResult(
+        stdout="", stderr="", exit_code=0, error=None
+    )
+    sandbox.commands.run = AsyncMock(
+        side_effect=[
+            handle,
+            CommandResult(stdout="", stderr="", exit_code=0, error=None),
+            CommandExitException(stdout="", stderr="", exit_code=1, error=None),
+        ]
+    )
+    return sandbox, handle
 
 
-@container_only
-def test_real_output_directory_and_exit(tmp_path: Path) -> None:
-    (tmp_path / "sub").mkdir()
+def test_command_runs_only_remotely_and_cleanup_preserves_vm() -> None:
+    sandbox, handle = transport()
 
     async def run() -> None:
-        backend = ContainerShell(tmp_path)
-        descriptors = set(os.listdir("/proc/self/fd"))
-        result = await backend.execute(
-            ShellRequest(
-                command="pwd; printf raw; printf err >&2; exit 3",
-                dir_path="sub",
-            ),
-            1000,
-        )
-        assert result.stdout == f"{tmp_path}/sub\nraw"
-        assert result.stderr == "err"
-        assert result.exit_code == 3
+        shell = E2BShell(sandbox, "/work")
+        result = await shell.execute(ShellRequest(command="printf hello"), 1000)
+        assert result.status == ShellStatus.EXITED
         assert result.capture_complete
-        assert set(os.listdir("/proc/self/fd")) == descriptors
-        await backend.close()
-        await backend.close()
+        await shell.close()
+        await shell.close()
+        assert shell.cleanup_complete
 
     asyncio.run(run())
+    assert sandbox.commands.run.call_args_list[0].kwargs["user"] == "root"
+    assert (
+        "setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs"
+        in sandbox.commands.run.call_args_list[0].args[0]
+    )
+    handle.disconnect.assert_awaited_once()
+    sandbox.kill.assert_not_called()
 
 
-@container_only
-@pytest.mark.parametrize("directory", ["/", "../", "missing", "escape"])
-def test_cwd_confinement(tmp_path: Path, directory: str) -> None:
-    (tmp_path / "escape").symlink_to("/")
+def test_capture_stops_at_limit() -> None:
+    capture = _Capture(4)
+    capture.append("abcd")
+    with pytest.raises(CaptureLimitError):
+        capture.append("overflow")
+    assert capture.data == b"abcd"
+
+
+def test_nonzero_exit_is_not_transport_failure() -> None:
+    sandbox, handle = transport()
+    handle.wait.side_effect = CommandExitException(
+        stdout="", stderr="", exit_code=7, error=None
+    )
+    result = asyncio.run(
+        E2BShell(sandbox, "/work").execute(ShellRequest(command="exit 7"), 1000)
+    )
+    assert result.exit_code == 7
+    assert result.status == ShellStatus.EXITED
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), CaptureLimitError(), RuntimeError()])
+def test_failed_stream_stops_task_uid(error: Exception) -> None:
+    sandbox, handle = transport()
+    handle.wait.side_effect = error
+    shell = E2BShell(sandbox, "/work")
+    result = asyncio.run(shell.execute(ShellRequest(command="yes"), 1000))
+    assert not result.capture_complete
+    assert shell.closed
+    assert sandbox.commands.run.call_args_list[-1].kwargs["user"] == "root"
+
+
+def test_finished_background_jobs_are_released() -> None:
+    sandbox, handle = transport()
+    sandbox.commands.run.side_effect = None
+    sandbox.commands.run.return_value = handle
 
     async def run() -> None:
-        backend = ContainerShell(tmp_path)
-        with pytest.raises((ValueError, OSError)):
-            await backend.execute(
-                ShellRequest(command="true", dir_path=directory), 1000
+        shell = E2BShell(sandbox, "/work")
+        for _ in range(100):
+            result = await shell.execute(
+                ShellRequest(command="true", is_background=True), 1000
             )
-        await backend.close()
+            assert result.background_pid == 42
+        await asyncio.gather(*tuple(shell.pending))
+        await asyncio.sleep(0)
+        assert not shell.pending
 
     asyncio.run(run())
 
 
-@container_only
-def test_timeout_retains_raw_and_signal(tmp_path: Path) -> None:
+def test_cancellation_settles_remote_spawn_and_cleans_uid() -> None:
+    sandbox, handle = transport()
+
+    async def wait() -> CommandResult:
+        await asyncio.sleep(20)
+        return CommandResult(stdout="", stderr="", exit_code=0, error=None)
+
+    handle.wait.side_effect = wait
+
     async def run() -> None:
-        backend = ContainerShell(tmp_path)
-        result = await backend.execute(
-            ShellRequest(command="printf before; sleep 20"), 100
-        )
-        assert result.status is ShellStatus.TIMEOUT
-        assert result.stdout == "before"
-        assert result.exit_code == -9
-        await backend.close()
-
-    asyncio.run(run())
-
-
-@container_only
-def test_background_deadline_and_close(tmp_path: Path) -> None:
-    async def run() -> None:
-        backend = ContainerShell(tmp_path)
-        result = await backend.execute(
-            ShellRequest(command="sleep 20", is_background=True), 100
-        )
-        assert result.status is ShellStatus.BACKGROUND
-        assert not result.capture_complete
-        assert result.background_pid is not None
-        await asyncio.sleep(0.2)
-        with pytest.raises(ProcessLookupError):
-            os.kill(result.background_pid, 0)
-        await backend.close()
-        with pytest.raises(RuntimeError, match="closed"):
-            await backend.execute(ShellRequest(command="true"), 1000)
-
-    asyncio.run(run())
-
-
-@container_only
-def test_output_limit_is_explicit(tmp_path: Path) -> None:
-    async def run() -> None:
-        backend = ContainerShell(tmp_path, capture_limit_bytes=1024)
-        result = await backend.execute(ShellRequest(command="yes output"), 1000)
-        assert len(result.stdout.encode()) == 1024
-        assert not result.capture_complete
-        assert result.error == "Raw capture limit reached"
-        await backend.close()
-
-    asyncio.run(run())
-
-
-@container_only
-def test_cancel_reaps_group(tmp_path: Path) -> None:
-    async def run() -> None:
-        files = set(Path("/tmp").glob("syndicate-shell-*"))
-        descriptors = set(os.listdir("/proc/self/fd"))
-        backend = ContainerShell(tmp_path)
+        shell = E2BShell(sandbox, "/work")
         task = asyncio.create_task(
-            backend.execute(
-                ShellRequest(
-                    command=f"echo $$ > {tmp_path}/pid; sleep 20",
-                ),
-                10000,
-            )
+            shell.execute(ShellRequest(command="sleep 20"), 1000)
         )
-        while not (tmp_path / "pid").exists():
-            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.01)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        pid = int((tmp_path / "pid").read_text())
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
-        assert set(os.listdir("/proc/self/fd")) == descriptors
-        assert set(Path("/tmp").glob("syndicate-shell-*")) == files
+        assert shell.cleanup_complete
 
     asyncio.run(run())
 
 
-@container_only
-@pytest.mark.parametrize(
-    ("command", "background", "timeout"),
-    [
-        ("printf transient", False, 1000),
-        ("printf transient; exit 7", False, 1000),
-        ("printf transient; sleep 20", False, 50),
-        ("printf transient; sleep 20", True, 1000),
-    ],
-)
-def test_capture_is_transient_and_close_releases_it(
-    tmp_path: Path,
-    command: str,
-    background: bool,
-    timeout: int,
-) -> None:
+def test_cleanup_failure_blocks_verifier() -> None:
+    sandbox, _ = transport()
+    sandbox.commands.run.side_effect = RuntimeError("unavailable")
+    shell = E2BShell(sandbox, "/work")
+    with pytest.raises(RuntimeError):
+        asyncio.run(shell.close())
+    assert not shell.cleanup_complete
+
+
+def test_close_waits_for_inflight_startup() -> None:
+    sandbox, handle = transport()
+
     async def run() -> None:
-        descriptors = set(os.listdir("/proc/self/fd"))
-        files = set(Path("/tmp").glob("syndicate-shell-*"))
-        backend = ContainerShell(tmp_path)
-        result = await backend.execute(
-            ShellRequest(command=command, is_background=background), timeout
-        )
-        assert result.stdout_file is None
-        assert result.stderr_file is None
-        assert set(Path("/tmp").glob("syndicate-shell-*")) == files
-        await backend.close()
-        await backend.close()
-        assert set(os.listdir("/proc/self/fd")) == descriptors
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def spawn() -> AsyncCommandHandle:
+            started.set()
+            await release.wait()
+            return handle
+
+        sandbox.commands.run.side_effect = [
+            spawn(),
+            CommandResult(stdout="", stderr="", exit_code=0, error=None),
+            CommandExitException(stdout="", stderr="", exit_code=1, error=None),
+        ]
+        original = sandbox.commands.run
+
+        async def transport_call(*args: object, **kwargs: object) -> object:
+            result = await original(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+
+        sandbox.commands.run = transport_call
+        shell = E2BShell(sandbox, "/work")
+        execute = asyncio.create_task(shell.execute(ShellRequest(command="true"), 1000))
+        await started.wait()
+        close = asyncio.create_task(shell.close())
+        await asyncio.sleep(0)
+        assert not shell.cleanup_complete
+        release.set()
+        await close
+        with pytest.raises(RuntimeError, match="closed"):
+            await execute
+        assert shell.cleanup_complete
 
     asyncio.run(run())
 
 
-@container_only
-def test_capture_uses_pipes_not_memory_files(tmp_path: Path) -> None:
-    async def run() -> None:
-        backend = ContainerShell(tmp_path)
-        result = await backend.execute(
-            ShellRequest(
-                command=(
-                    "python -c 'import os,stat; "
-                    "print(stat.S_ISFIFO(os.fstat(1).st_mode), "
-                    "stat.S_ISFIFO(os.fstat(2).st_mode))'"
-                )
-            ),
-            1000,
-        )
-        await backend.close()
-        assert result.stdout == "True True\n"
-
-    asyncio.run(run())
+@pytest.mark.parametrize("uid", [0, -1, True])
+def test_reject_privileged_or_invalid_uid(uid: int) -> None:
+    sandbox, _ = transport()
+    with pytest.raises(ValueError):
+        E2BShell(sandbox, "/work", uid=uid)

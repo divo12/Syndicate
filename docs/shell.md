@@ -2,11 +2,10 @@
 
 Use `async with ShellBinding(sandbox, timeout_ms=...)` and await
 `run_shell_command(ShellRequest(...))`. There is no implicit sandbox or host-shell
-fallback. P07b's `ContainerShell` implements `SandboxShell.execute`/`close` and
-owns confined cwd, bash process groups, deadlines and transient RAM capture.
-Worker8 owns that backend. Worker9/P08 owns runtime dependencies/install, task
-container identity and whole-trial UID stop confirmation, including descendants
-that escape groups, before P09 injects the verifier. Do not create a second backend.
+fallback. P07b's controller-side `E2BShell` implements `SandboxShell.execute`/`close`
+using an explicitly supplied E2B task VM. It owns confined cwd, command deadlines,
+transient capture, and whole-UID cleanup. Harbor retains VM creation/deletion and
+must wait for successful cleanup before injecting verifier inputs.
 The binding bounds response time and invokes cleanup on timeout, cancellation,
 errors and context exit. A nonresponsive backend can still defeat cleanup;
 production backend integration must prove these obligations before H0 is sealed.
@@ -26,5 +25,5 @@ codes are not formatted as real exit codes. No extra model tools are introduced.
 `SYNDICATE_DOCKER_TEST=1 .venv/bin/python -m pytest tests/test_shell.py` runs a
 synthetic no-model container smoke test with an explicitly supplied test backend.
 It checks binding dispatch and timeout cleanup. P07b's separate backend tests
-cover actual process groups and cwd checks. Harbor lifecycle, whole-UID shutdown
-and protected verifier mounts remain P08/P09 integration obligations.
+cover the E2B adapter without external services; `scripts/e2b_smoke.py` exercises
+real remote execution. See [E2B backend](shell-backend.md) for setup and ownership.
