@@ -1,6 +1,6 @@
 import json
 
-from nexau import Tool  # type: ignore[import-untyped]
+from nexau import Tool
 from test_task_judge import CITE, GRANT, Remote
 
 from syndicate.evidence import EvidenceReader
