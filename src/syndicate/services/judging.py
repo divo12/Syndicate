@@ -2,14 +2,24 @@
 
 from collections.abc import Callable
 
-from syndicate.models.evidence import Citation, EvidenceStatus
+from syndicate.models.evidence import (
+    Citation,
+    EvidenceStatus,
+    RecordCitation,
+    SpanCitation,
+    SpanContext,
+    SpanQuery,
+)
 from syndicate.models.judging import (
     CriterionStatus,
+    JudgeAttempt,
     JudgeBuildRequest,
     JudgeDraft,
     JudgeSpec,
     ReportDraft,
     ReportStatus,
+    RunCoverage,
+    SpanReadPage,
     TaskReport,
 )
 from syndicate.services.evidence import EvidenceReader
@@ -108,6 +118,8 @@ def validate_report(
     reader: EvidenceReader,
     draft: ReportDraft,
     examined: tuple[Citation, ...],
+    verifier_refs: tuple[RecordCitation, ...] = (),
+    usage_ref: str | None = None,
 ) -> TaskReport:
     """Recheck remote evidence, retaining only IDs and findings, never payloads.
 
@@ -134,6 +146,8 @@ def validate_report(
         findings=draft.findings,
         unresolved_questions=tuple(unresolved),
         coverage=draft.coverage,
+        verifier_refs=verifier_refs,
+        usage_ref=usage_ref,
     )
 
 
@@ -160,3 +174,137 @@ def _coverage_gaps(reader: EvidenceReader, draft: ReportDraft) -> tuple[str, ...
                 f"Investigation coverage incomplete for run {coverage.run_id}"
             )
     return tuple(unresolved)
+
+
+def _verifier_ready(
+    reader: EvidenceReader, references: tuple[RecordCitation, ...]
+) -> bool:
+    assigned = {grant.link.run_id for grant in reader.grants}
+    if (
+        len(references) != len(assigned)
+        or {ref.run_id for ref in references} != assigned
+    ):
+        return False
+    for reference in references:
+        result = reader.validate_citation(reference)
+        if result.status is not EvidenceStatus.RESOLVED or not result.complete:
+            return False
+    return True
+
+
+def execute_judge(
+    spec: JudgeSpec,
+    reader: EvidenceReader,
+    verifier_refs: tuple[RecordCitation, ...],
+    usage_ref: str,
+    invoke: Callable[[], JudgeAttempt],
+) -> TaskReport:
+    """One isolated runtime invocation; failed attempts retain their usage reference.
+
+    The controller provides allowlisted trusted verifier record references and
+    reserves usage before calling. P13 owns record kind/provenance validation.
+    No retry or agent loop is implemented here; invoke belongs to NexAU.
+    """
+    if not usage_ref.strip():
+        raise ValueError("Usage reservation reference is required before dispatch")
+    run_ids = tuple(sorted({grant.link.run_id for grant in reader.grants}))
+    incomplete = ReportDraft(
+        run_ids=run_ids,
+        status=ReportStatus.INCOMPLETE,
+        coverage=tuple(RunCoverage(run_id=run_id) for run_id in run_ids),
+    )
+    reason = "Judge invocation failed or returned inadmissible evidence"
+    try:
+        _require_ready(spec, reader, verifier_refs)
+        attempt = invoke()
+        return validate_report(
+            spec,
+            reader,
+            ReportDraft.model_validate_json(attempt.output_json),
+            attempt.examined,
+            verifier_refs,
+            usage_ref,
+        )
+    except _EvidenceUnavailable as error:
+        reason = str(error)
+    except (ValueError, OSError, RuntimeError):
+        pass
+    return TaskReport(
+        task_id=spec.task_id,
+        judge_spec_hash=spec.spec_hash,
+        run_ids=incomplete.run_ids,
+        status=ReportStatus.INCOMPLETE,
+        coverage=incomplete.coverage,
+        unresolved_questions=(reason,),
+        verifier_refs=verifier_refs,
+        usage_ref=usage_ref,
+    )
+
+
+class _EvidenceUnavailable(ValueError):
+    """Safe controller-generated evidence failure, without provider payloads."""
+
+
+def _require_ready(
+    spec: JudgeSpec, reader: EvidenceReader, verifier_refs: tuple[RecordCitation, ...]
+) -> None:
+    if any(grant.link.task_id != spec.task_id for grant in reader.grants):
+        raise ValueError("Reader grant belongs to another task")
+    if not _verifier_ready(reader, verifier_refs):
+        raise _EvidenceUnavailable("Trusted verifier evidence is missing or incomplete")
+    for grant in reader.grants:
+        manifest = reader.get_trace_manifest(grant.link.run_id, grant.trace_ref)
+        if manifest.status is not EvidenceStatus.RESOLVED or not manifest.complete:
+            raise _EvidenceUnavailable("Neatlogs evidence is missing or incomplete")
+
+
+class JudgeEvidence:
+    """Invocation-local read coverage: IDs and offsets only, never trace payloads."""
+
+    def __init__(self, reader: EvidenceReader) -> None:
+        self.reader = reader
+        self.pages: tuple[SpanReadPage, ...] = ()
+
+    def read_span_context(self, query: SpanQuery) -> SpanContext:
+        context = self.reader.read_span_context(query)
+        if context.status is not EvidenceStatus.RESOLVED or not context.complete:
+            return context
+        for span in context.spans:
+            if span.input.text is None or span.output.text is None:
+                continue
+            offsets = (span.input.next_offset or 0, span.output.next_offset or 0)
+            self.pages += (
+                SpanReadPage(
+                    citation=SpanCitation(
+                        run_id=query.run_id,
+                        trace_ref=query.trace_ref,
+                        span_ref=span.span_ref,
+                    ),
+                    offset=query.offset,
+                    next_offset=max(offsets) or None,
+                ),
+            )
+        return context
+
+    @property
+    def examined(self) -> tuple[Citation, ...]:
+        candidates = tuple(page.citation for page in self.pages if page.offset == 0)
+        return tuple(
+            ref
+            for index, ref in enumerate(candidates)
+            if ref not in candidates[:index] and self._complete(ref)
+        )
+
+    def _complete(self, citation: SpanCitation) -> bool:
+        offset = 0
+        pages = sorted(
+            (page for page in self.pages if page.citation == citation),
+            key=lambda page: page.offset,
+        )
+        for page in pages:
+            if page.offset > offset:
+                return False
+            if page.next_offset is None:
+                return True
+            offset = max(offset, page.next_offset)
+        return False
