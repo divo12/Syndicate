@@ -18,7 +18,12 @@ from openai import OpenAI
 from pydantic import SecretStr
 
 from syndicate.baseline import prepare_baseline
-from syndicate.runtime_contracts import RuntimeRequest, installed_runtime
+from syndicate.runtime_contracts import (
+    RoleDispatchReceipt,
+    RoleDispatchRequest,
+    RuntimeRequest,
+    installed_runtime,
+)
 from syndicate.shell import ShellBinding, ShellRequest
 from syndicate.shell_backend import ContainerShell
 
@@ -43,6 +48,59 @@ class _Completion(Middleware):
 class _ToolReply:
     content: str
     returnDisplay: str
+
+
+async def dispatch_role(
+    request: RoleDispatchRequest, tools: tuple[Tool, ...], client: OpenAI
+) -> RoleDispatchReceipt:
+    """Run one bounded product role with caller-supplied tools and client only."""
+    if client.max_retries != request.max_retries:
+        raise ValueError("Role dispatch requires an OpenAI client with zero retries")
+    completion = _Completion()
+    for tool in tools:
+        tool.disable_parallel = True
+    config = AgentConfig(
+        name=request.role.value,
+        system_prompt=request.prompt,
+        system_prompt_type="string",
+        max_iterations=request.max_iterations,
+        max_context_tokens=request.max_context_tokens,
+        # NexAU uses range(retry_attempts), so one means one total provider call.
+        retry_attempts=1,
+        tools=list(tools),
+        middlewares=[completion],
+        llm_config=LLMConfig(
+            model=request.model.deployment,
+            base_url=request.model.endpoint,
+            api_key=client.api_key,
+            api_type="openai_responses",
+            max_tokens=request.max_output_tokens,
+            stream=False,
+            timeout=request.budget.max_seconds,
+            max_retries=0,
+        ),
+    )
+    agent = Agent(config=config)
+    try:
+        async with asyncio.timeout(request.budget.max_seconds):
+            result = await agent.run_async(
+                message=request.prompt,
+                custom_llm_client_provider=lambda _: client,
+            )
+        if completion.reason not in (
+            AgentStopReason.SUCCESS,
+            AgentStopReason.NO_MORE_TOOL_CALLS,
+        ):
+            raise RuntimeStopped(completion.reason)
+        if not isinstance(result, str):
+            raise TypeError("Unexpected NexAU response shape")
+        return RoleDispatchReceipt(
+            final_text=result,
+            usage_ref=request.usage_ref,
+            stop_reason=completion.reason,
+        )
+    finally:
+        agent.sync_cleanup()
 
 
 async def run_in_container(request: RuntimeRequest, key: SecretStr) -> str:
