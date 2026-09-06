@@ -56,7 +56,12 @@ class NeatlogsCapture:
         )
 
     def flush(self, link: RunLink) -> CaptureReceipt:
-        neatlogs.flush()
+        if not neatlogs.flush():
+            return CaptureReceipt(
+                link=link,
+                state=CaptureState.BLOCKED,
+                reason="Neatlogs flush did not complete",
+            )
         return CaptureReceipt(
             link=link,
             state=CaptureState.FLUSHED_UNVERIFIED,
