@@ -1,7 +1,9 @@
 """Controller-authorized Neatlogs reads; no payload files or fallback cache."""
 
+from dataclasses import dataclass
 from uuid import UUID
 
+from syndicate.benchmark import RunOutcome, RunReceipt, VerifierReceipt
 from syndicate.evidence_contracts import (
     Citation,
     CitationValidation,
@@ -9,6 +11,7 @@ from syndicate.evidence_contracts import (
     EvidenceStatus,
     ManifestOverview,
     RecordCitation,
+    RunEvidenceGrant,
     SearchPage,
     SpanContext,
     SpanExcerpt,
@@ -60,10 +63,16 @@ def sufficient(receipt: NeatlogsReadbackReceipt) -> bool:
 
 class EvidenceReader:
     def __init__(
-        self, remote: NeatlogsReadbackReader, grants: tuple[EvidenceGrant, ...]
+        self,
+        remote: NeatlogsReadbackReader,
+        grants: tuple[EvidenceGrant, ...],
+        run_grants: tuple[RunEvidenceGrant, ...] = (),
+        run_receipts: tuple[RunReceipt, ...] = (),
     ) -> None:
         self.remote = remote
         self.grants = grants
+        self.run_grants = run_grants
+        self.run_receipts = run_receipts
 
     def _read(
         self, run_id: UUID, trace_ref: str
@@ -100,14 +109,66 @@ class EvidenceReader:
 
     def validate_citation(self, citation: Citation) -> CitationValidation:
         if isinstance(citation, RecordCitation):
-            return CitationValidation(status=EvidenceStatus.INCOMPLETE, complete=False)
-        status, receipt = self._read(citation.run_id, citation.trace_ref)
-        if receipt is not None and citation.span_ref not in tuple(
-            span.span_id for span in receipt.spans
+            status, record_receipt = self._record_receipt(citation)
+            return CitationValidation(
+                status=status, complete=record_receipt is not None
+            )
+        status, trace_receipt = self._read(citation.run_id, citation.trace_ref)
+        if trace_receipt is not None and citation.span_ref not in tuple(
+            span.span_id for span in trace_receipt.spans
         ):
             status = EvidenceStatus.MISSING
         return CitationValidation(
             status=status, complete=status == EvidenceStatus.RESOLVED
+        )
+
+    def read_run_record(self, citation: RecordCitation) -> "RunRecordView":
+        status, receipt = self._record_receipt(citation)
+        return RunRecordView(
+            status=status, complete=receipt is not None, receipt=receipt
+        )
+
+    def read_verifier_result(self, citation: RecordCitation) -> "VerifierResultView":
+        status, receipt = self._record_receipt(citation)
+        verifier = receipt.verifier if receipt is not None else None
+        return VerifierResultView(
+            status=status, complete=verifier is not None, receipt=verifier
+        )
+
+    def _record_receipt(
+        self, citation: RecordCitation
+    ) -> tuple[EvidenceStatus, RunReceipt | None]:
+        grant = self._record_grant(citation)
+        if grant is None:
+            return self._ungranted_record(citation), None
+        receipt = self._receipt_for(grant)
+        if receipt is None:
+            return EvidenceStatus.MISSING, None
+        if not _aligned_receipt(grant, receipt):
+            return EvidenceStatus.MISALIGNED, None
+        if not _admissible_receipt(receipt):
+            return EvidenceStatus.INCOMPLETE, None
+        return EvidenceStatus.RESOLVED, receipt
+
+    def _record_grant(self, citation: RecordCitation) -> RunEvidenceGrant | None:
+        return next(
+            (
+                item
+                for item in self.run_grants
+                if (item.run_id, item.record_ref)
+                == (citation.run_id, citation.record_ref)
+            ),
+            None,
+        )
+
+    def _ungranted_record(self, citation: RecordCitation) -> EvidenceStatus:
+        if any(item.run_id == citation.run_id for item in self.run_grants):
+            return EvidenceStatus.MISALIGNED
+        return EvidenceStatus.FORBIDDEN
+
+    def _receipt_for(self, grant: RunEvidenceGrant) -> RunReceipt | None:
+        return next(
+            (item for item in self.run_receipts if item.run_id == grant.run_id), None
         )
 
     def search_trajectory(self, query: TraceQuery) -> SearchPage:
@@ -175,3 +236,34 @@ class EvidenceReader:
             semantic_digest=receipt.semantic_digest,
             span_count=len(receipt.spans),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecordView:
+    status: EvidenceStatus
+    complete: bool
+    receipt: RunReceipt | None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifierResultView:
+    status: EvidenceStatus
+    complete: bool
+    receipt: VerifierReceipt | None
+
+
+def _aligned_receipt(grant: RunEvidenceGrant, receipt: RunReceipt) -> bool:
+    return (grant.operation_id, grant.attempt_id, grant.run_id, grant.task_id) == (
+        receipt.operation_id,
+        receipt.attempt_id,
+        receipt.run_id,
+        receipt.task_id,
+    ) and grant.record_ref == receipt.verifier.raw_result_ref
+
+
+def _admissible_receipt(receipt: RunReceipt) -> bool:
+    return (
+        receipt.cleanup_complete
+        and receipt.outcome in (RunOutcome.PASS, RunOutcome.FAIL)
+        and receipt.verifier.outcome is receipt.outcome
+    )
