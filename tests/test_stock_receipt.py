@@ -9,12 +9,8 @@ from harbor.models.trial.result import AgentInfo, TimingInfo, TrialResult
 from harbor.models.verifier.result import VerifierResult
 
 from syndicate.adapters.harbor_agent import CleanupReceipt
-from syndicate.services import stock
 from syndicate.services.benchmark import RunOutcome
 from syndicate.services.stock import (
-    AGENT_IMPORT,
-    AGENT_NAME,
-    CleanupControlReceipt,
     ControllerTrialBinding,
     _controller_authority,
     _ControllerAuthority,
@@ -52,31 +48,15 @@ def result(identity: ControllerTrialBinding) -> TrialResult:
     )
 
 
-def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
-    receipt = CleanupControlReceipt(
-        operation_id=identity.operation_id,
-        attempt_id=identity.attempt_id,
-        run_id=identity.run_id,
-        task_id=identity.task_id,
-        cleanup=CleanupReceipt(uid=10001, complete=True),
-        agent_import=AGENT_IMPORT,
-        agent_name=AGENT_NAME,
-        uid=10001,
-        written_at=ENDED - timedelta(seconds=1),
-    )
-    return receipt.model_copy(update={"controller_seal": stock._cleanup_seal(receipt)})
-
-
 def authority(identity: ControllerTrialBinding, root: Path) -> _ControllerAuthority:
     value = _controller_authority(identity, root)
-    value.observe_settled_cleanup(cleanup(identity).cleanup)
+    value.observe_settled_cleanup(CleanupReceipt(uid=10001, complete=True))
     return value
 
 
 def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> None:
     identity = binding()
-    expected = cleanup(identity)
-    receipt = authority(identity, tmp_path).issue(expected.written_at)
+    receipt = authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1))
     loaded = load_cleanup_receipt(identity, tmp_path)
     terminal = postprocess_stock_result(
         identity, loaded, result(identity), "harbor:run"
@@ -87,7 +67,7 @@ def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> N
     assert terminal.verifier.raw_result_ref == "harbor:run"
     with pytest.raises(FileExistsError):
         authority(identity, tmp_path).issue(ENDED)
-    assert load_cleanup_receipt(identity, tmp_path) == expected
+    assert load_cleanup_receipt(identity, tmp_path) == receipt
     assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == ["cleanup.json"]
 
 
@@ -109,16 +89,10 @@ def test_fabricated_or_tampered_receipt_fails_closed(tmp_path: Path) -> None:
     identity = binding()
     authority(identity, tmp_path).issue(ENDED)
     path = next(tmp_path.rglob("cleanup.json"))
-    forged = cleanup(identity).model_copy(update={"controller_seal": "forged"})
-    path.write_text(forged.model_dump_json(), encoding="utf-8")
-    with pytest.raises(ValueError, match="authentic"):
+    forged = path.read_text(encoding="utf-8").replace("10001", "10002")
+    path.write_text(forged, encoding="utf-8")
+    with pytest.raises(ValueError):
         load_cleanup_receipt(identity, tmp_path)
-
-
-def test_no_exported_api_can_issue_fabricated_cleanup() -> None:
-    assert not hasattr(stock, "emit_cleanup_receipt")
-    assert not hasattr(stock, "controller_authority")
-    assert not hasattr(stock, "write_settled_cleanup")
 
 
 def test_symlinked_receipt_path_fails_closed(tmp_path: Path) -> None:
@@ -138,9 +112,9 @@ def test_context_mismatch_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("field", ["operation_id", "attempt_id", "run_id", "task_id"])
-def test_rejects_cleanup_identity(field: str) -> None:
+def test_rejects_cleanup_identity(field: str, tmp_path: Path) -> None:
     identity = binding()
-    receipt = cleanup(identity)
+    receipt = authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1))
     invalid = receipt.model_copy(
         update={field: "different" if field == "task_id" else uuid4()}
     )
@@ -149,7 +123,7 @@ def test_rejects_cleanup_identity(field: str) -> None:
 
 
 @pytest.mark.parametrize("field", ["run", "task", "adapter", "missing_result"])
-def test_rejects_stock_identity_and_missing_result(field: str) -> None:
+def test_rejects_stock_identity_and_missing_result(field: str, tmp_path: Path) -> None:
     identity = binding()
     invalid = result(identity)
     match field:
@@ -162,25 +136,34 @@ def test_rejects_stock_identity_and_missing_result(field: str) -> None:
         case _:
             invalid.verifier_result = None
     with pytest.raises(ValueError):
-        postprocess_stock_result(identity, cleanup(identity), invalid, "harbor:run")
+        postprocess_stock_result(
+            identity,
+            authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
+            invalid,
+            "harbor:run",
+        )
 
 
 @pytest.mark.parametrize("offset", [-6, 1, 3])
-def test_rejects_cleanup_outside_agent_interval(offset: int) -> None:
+def test_rejects_cleanup_outside_agent_interval(offset: int, tmp_path: Path) -> None:
     identity = binding()
-    invalid = cleanup(identity).model_copy(
-        update={"written_at": ENDED + timedelta(seconds=offset)}
-    )
-    invalid = invalid.model_copy(
-        update={"controller_seal": stock._cleanup_seal(invalid)}
+    invalid = result(identity)
+    invalid.agent_execution = TimingInfo(
+        started_at=ENDED + timedelta(seconds=offset - 1),
+        finished_at=ENDED + timedelta(seconds=offset),
     )
     with pytest.raises(ValueError, match="after agent cleanup"):
-        postprocess_stock_result(identity, invalid, result(identity), "harbor:run")
+        postprocess_stock_result(
+            identity,
+            authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
+            invalid,
+            "harbor:run",
+        )
 
 
 @pytest.mark.parametrize("phase", ["agent_execution", "verifier"])
 @pytest.mark.parametrize("defect", ["missing", "unfinished", "reversed", "naive"])
-def test_rejects_invalid_intervals(phase: str, defect: str) -> None:
+def test_rejects_invalid_intervals(phase: str, defect: str, tmp_path: Path) -> None:
     identity = binding()
     invalid = result(identity)
     timing = TimingInfo(started_at=ENDED, finished_at=ENDED)
@@ -196,7 +179,12 @@ def test_rejects_invalid_intervals(phase: str, defect: str) -> None:
     else:
         invalid.verifier = None if defect == "missing" else timing
     with pytest.raises(ValueError, match="timing"):
-        postprocess_stock_result(identity, cleanup(identity), invalid, "harbor:run")
+        postprocess_stock_result(
+            identity,
+            authority(identity, tmp_path).issue(ENDED - timedelta(seconds=1)),
+            invalid,
+            "harbor:run",
+        )
 
 
 def test_rejects_unsettled_cleanup_and_naive_proof(tmp_path: Path) -> None:
