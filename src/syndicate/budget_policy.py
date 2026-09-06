@@ -46,14 +46,14 @@ class CampaignBudgetPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    role_budgets: tuple[RoleBudget, ...] = Field(min_length=len(ProductRole))
+    role_budgets: tuple[RoleBudget, ...] = Field(
+        min_length=len(ProductRole), max_length=len(ProductRole)
+    )
     campaign_cap: BudgetCap
 
     @model_validator(mode="after")
     def validate_totals(self) -> Self:
-        if len(self.role_budgets) != len(ProductRole) or {
-            item.role for item in self.role_budgets
-        } != set(ProductRole):
+        if {item.role for item in self.role_budgets} != set(ProductRole):
             raise ValueError("Role budgets must cover each product role exactly once")
         for item in self.role_budgets:
             if not item.cap.fits_within(self.campaign_cap):
