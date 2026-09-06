@@ -108,11 +108,29 @@ def test_finality_and_linkage_gaps_are_incomplete(
 
 def test_coverage_mismatch_is_incomplete() -> None:
     value = expected()
-    changed = value.receipt.model_copy(
-        update={"expected_span_refs": ("root", "root")}
-    )
+    changed = value.receipt.model_copy(update={"expected_span_refs": ("root", "root")})
     with pytest.raises(ValidationError):
         ExpectedTrace(receipt=changed)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"trace_ref": "b" * 32},
+        {
+            "link": RunLink(
+                operation_id=UUID(int=9),
+                attempt_id=UUID(int=2),
+                run_id=UUID(int=3),
+                task_id="task",
+            )
+        },
+        {"expected_span_refs": ("child", "root")},
+    ],
+)
+def test_tampered_controller_seal_is_rejected(change: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="binding digest"):
+        ExpectedTrace(receipt=expected().receipt.model_copy(update=change))
 
 
 @pytest.mark.parametrize(

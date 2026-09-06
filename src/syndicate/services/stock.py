@@ -1,6 +1,8 @@
 """Controller-owned Harbor cleanup proofs; never a public agent-facing writer."""
 
+import hmac
 import os
+import secrets
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,6 +17,7 @@ from syndicate.services.benchmark import RunReceipt, classify_verifier
 AGENT_NAME = "syndicate-nexau"
 AGENT_IMPORT = "syndicate.adapters.harbor_adapter.SyndicateNexAUAgent"
 CONTROLLER_UID = 10001
+_CONTROLLER_SEAL_KEY = secrets.token_bytes(32)
 
 
 class ControllerTrialBinding(WireModel):
@@ -36,6 +39,7 @@ class CleanupControlReceipt(ControllerTrialBinding):
     agent_name: str
     uid: int
     written_at: AwareDatetime
+    controller_seal: str = ""
 
 
 def _controller_authority(
@@ -52,13 +56,16 @@ def _write_settled_cleanup(
         raise ValueError(
             "Only settled controller cleanup may authorize a stock receipt"
         )
-    receipt = CleanupControlReceipt(
+    provisional = CleanupControlReceipt(
         **authority.binding.model_dump(),
         cleanup=cleanup,
         agent_import=AGENT_IMPORT,
         agent_name=AGENT_NAME,
         uid=cleanup.uid,
         written_at=written_at,
+    )
+    receipt = provisional.model_copy(
+        update={"controller_seal": _cleanup_seal(provisional)}
     )
     parent = _receipt_parent(authority.binding, authority.root)
     temporary = ".cleanup-" + uuid4().hex
@@ -171,7 +178,13 @@ def _authentic(receipt: CleanupControlReceipt) -> bool:
         and receipt.uid == CONTROLLER_UID
         and receipt.agent_import == AGENT_IMPORT
         and receipt.agent_name == AGENT_NAME
+        and hmac.compare_digest(receipt.controller_seal, _cleanup_seal(receipt))
     )
+
+
+def _cleanup_seal(receipt: CleanupControlReceipt) -> str:
+    content = receipt.model_dump_json(exclude={"controller_seal"}).encode()
+    return hmac.digest(_CONTROLLER_SEAL_KEY, content, "sha256").hex()
 
 
 def _timing(
