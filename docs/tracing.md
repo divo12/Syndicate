@@ -29,3 +29,6 @@ The SDK version is resolved from the latest stable release when refreshing the
 lock. `python -m neatlogs doctor --local --json` checks its offline envelope.
 No application or authenticated probe was run during setup; hosted trace delivery
 must be confirmed when the operator next runs the controller.
+
+Remote readback and run-link receipt contracts belong to PR25. They are not part
+of this tracing-only layer and are not claimed to validate these workflow spans.
