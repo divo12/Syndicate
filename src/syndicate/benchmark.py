@@ -1,14 +1,15 @@
 """Trusted Harbor verifier classification without copying its payload locally."""
 
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, Self
+from uuid import UUID
 
 from harbor.environments.base import BaseEnvironment
 from harbor.models.task.task import Task
 from harbor.models.trial.paths import TrialPaths
 from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.verifier import Verifier
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RunOutcome(StrEnum):
@@ -42,9 +43,24 @@ class RunReceipt(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    operation_id: UUID
+    attempt_id: UUID
+    run_id: UUID
     task_id: str = Field(min_length=1)
+    cleanup_complete: bool
     outcome: RunOutcome
     verifier: VerifierReceipt
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if self.verifier.outcome is not self.outcome:
+            raise ValueError("Verifier outcome must match run outcome")
+        if (
+            self.outcome in (RunOutcome.PASS, RunOutcome.FAIL)
+            and not self.cleanup_complete
+        ):
+            raise ValueError("Verified outcome requires complete cleanup")
+        return self
 
 
 class _VerifierRunner(Protocol):
