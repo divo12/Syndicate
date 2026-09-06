@@ -6,7 +6,7 @@ import shlex
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -27,6 +27,17 @@ class ApiFamily(StrEnum):
 
 class ModelConfigError(ValueError):
     """Safe configuration failure, containing neither source values nor paths."""
+
+
+def _validate_https_authority(parsed: SplitResult) -> None:
+    """Require an HTTPS host with a valid port and no embedded credentials."""
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.port == 0
+        or parsed.username is not None
+    ):
+        raise ValueError("Expected a nonsecret HTTPS endpoint")
 
 
 class ModelSettings(BaseModel):
@@ -50,13 +61,9 @@ class ModelSettings(BaseModel):
     @classmethod
     def validate_endpoint(cls, value: str) -> str:
         parsed = urlsplit(value)
+        _validate_https_authority(parsed)
         if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.port == 0
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
+            parsed.query
             or parsed.fragment
             or any(character.isspace() for character in value)
         ):
@@ -114,11 +121,11 @@ def _read_env(path: Path) -> dict[str, str]:
     """Parse only selected assignments; never execute, interpolate or mutate env."""
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
-        name, separator, raw = line.strip().removeprefix("export ").partition("=")
+        name, _, raw = line.strip().removeprefix("export ").partition("=")
         name = name.strip()
         if name not in _ENV_NAMES:
             continue
-        if not separator or name in values:
+        if name in values:
             raise ModelConfigError("Invalid environment assignment")
         values[name] = _parse_env_value(raw)
     if values.keys() != _ENV_NAMES:
