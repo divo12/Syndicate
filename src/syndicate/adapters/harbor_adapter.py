@@ -21,7 +21,6 @@ from syndicate.services.stock import (
     ControllerTrialBinding,
     _controller_authority,
     _ControllerAuthority,
-    _write_settled_cleanup,
 )
 
 HARNESS_SOURCE = Path(__file__).parents[3] / "harnesses/seed"
@@ -124,9 +123,8 @@ class SyndicateNexAUAgent(BaseAgent):
                 "Controller run failed; verifier handoff blocked"
             ) from None
         if self._controller_authority is not None:
-            _write_settled_cleanup(
-                self._controller_authority, self.cleanup_receipt, datetime.now(UTC)
-            )
+            self._controller_authority.observe_settled_cleanup(self.cleanup_receipt)
+            self._controller_authority.issue(datetime.now(UTC))
 
     def bind_controller_receipt(
         self, binding: ControllerTrialBinding, controller_root: Path

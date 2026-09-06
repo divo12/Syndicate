@@ -17,7 +17,7 @@ from syndicate.services.stock import (
     CleanupControlReceipt,
     ControllerTrialBinding,
     _controller_authority,
-    _write_settled_cleanup,
+    _ControllerAuthority,
     load_cleanup_receipt,
     postprocess_stock_result,
 )
@@ -67,12 +67,16 @@ def cleanup(identity: ControllerTrialBinding) -> CleanupControlReceipt:
     return receipt.model_copy(update={"controller_seal": stock._cleanup_seal(receipt)})
 
 
+def authority(identity: ControllerTrialBinding, root: Path) -> _ControllerAuthority:
+    value = _controller_authority(identity, root)
+    value.observe_settled_cleanup(cleanup(identity).cleanup)
+    return value
+
+
 def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> None:
     identity = binding()
     expected = cleanup(identity)
-    receipt = _write_settled_cleanup(
-        _controller_authority(identity, tmp_path), expected.cleanup, expected.written_at
-    )
+    receipt = authority(identity, tmp_path).issue(expected.written_at)
     loaded = load_cleanup_receipt(identity, tmp_path)
     terminal = postprocess_stock_result(
         identity, loaded, result(identity), "harbor:run"
@@ -82,9 +86,7 @@ def test_receipt_publication_is_exclusive_and_postprocesses(tmp_path: Path) -> N
     assert terminal.verifier.reward == 0.0
     assert terminal.verifier.raw_result_ref == "harbor:run"
     with pytest.raises(FileExistsError):
-        _write_settled_cleanup(
-            _controller_authority(identity, tmp_path), expected.cleanup, ENDED
-        )
+        authority(identity, tmp_path).issue(ENDED)
     assert load_cleanup_receipt(identity, tmp_path) == expected
     assert [p.name for p in tmp_path.rglob("*") if p.is_file()] == ["cleanup.json"]
 
@@ -99,22 +101,24 @@ def test_failed_write_leaves_no_partial_receipt(
 
     monkeypatch.setattr("syndicate.services.stock.os.fsync", fail_sync)
     with pytest.raises(OSError, match="disk failed"):
-        _write_settled_cleanup(
-            _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
-        )
+        authority(identity, tmp_path).issue(ENDED)
     assert not [p for p in tmp_path.rglob("*") if p.is_file()]
 
 
 def test_fabricated_or_tampered_receipt_fails_closed(tmp_path: Path) -> None:
     identity = binding()
-    _write_settled_cleanup(
-        _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
-    )
+    authority(identity, tmp_path).issue(ENDED)
     path = next(tmp_path.rglob("cleanup.json"))
     forged = cleanup(identity).model_copy(update={"controller_seal": "forged"})
     path.write_text(forged.model_dump_json(), encoding="utf-8")
     with pytest.raises(ValueError, match="authentic"):
         load_cleanup_receipt(identity, tmp_path)
+
+
+def test_no_exported_api_can_issue_fabricated_cleanup() -> None:
+    assert not hasattr(stock, "emit_cleanup_receipt")
+    assert not hasattr(stock, "controller_authority")
+    assert not hasattr(stock, "write_settled_cleanup")
 
 
 def test_symlinked_receipt_path_fails_closed(tmp_path: Path) -> None:
@@ -127,9 +131,7 @@ def test_symlinked_receipt_path_fails_closed(tmp_path: Path) -> None:
 
 def test_context_mismatch_fails_closed(tmp_path: Path) -> None:
     identity = binding()
-    _write_settled_cleanup(
-        _controller_authority(identity, tmp_path), cleanup(identity).cleanup, ENDED
-    )
+    authority(identity, tmp_path).issue(ENDED)
     wrong_context = identity.model_copy(update={"environment_context_id": "other"})
     with pytest.raises(ValueError, match="authentic"):
         load_cleanup_receipt(wrong_context, tmp_path)
@@ -200,14 +202,8 @@ def test_rejects_invalid_intervals(phase: str, defect: str) -> None:
 def test_rejects_unsettled_cleanup_and_naive_proof(tmp_path: Path) -> None:
     identity = binding()
     with pytest.raises(ValueError, match="settled"):
-        _write_settled_cleanup(
-            _controller_authority(identity, tmp_path),
-            CleanupReceipt(uid=10001, complete=False),
-            ENDED,
+        _controller_authority(identity, tmp_path).observe_settled_cleanup(
+            CleanupReceipt(uid=10001, complete=False)
         )
     with pytest.raises(ValueError, match="timezone"):
-        _write_settled_cleanup(
-            _controller_authority(identity, tmp_path),
-            cleanup(identity).cleanup,
-            ENDED.replace(tzinfo=None),
-        )
+        authority(identity, tmp_path).issue(ENDED.replace(tzinfo=None))
