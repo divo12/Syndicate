@@ -15,6 +15,7 @@ backoff==2.2.1
 beautifulsoup4==4.15.0
 boto3==1.43.89
 botocore==1.43.89
+bracex==3.0.1
 certifi==2026.7.22
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'
 charset-normalizer==3.5.1
@@ -26,7 +27,9 @@ dacite==1.9.2
 deprecation==2.1.0
 dirhash==0.5.0
 distro==1.9.0
+dockerfile-parse==2.0.1
 docstring-parser==0.18.0
+e2b==2.26.0
 editables==0.5
 fastapi==0.141.1
 fastuuid==0.14.0
@@ -177,6 +180,7 @@ urllib3==2.7.0
 uvicorn==0.52.4
 uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
 watchfiles==1.2.0
+wcmatch==10.2.1
 websockets==15.0.1
 wrapt==2.4.0
 yarl==1.24.5

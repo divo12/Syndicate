@@ -9,6 +9,7 @@ from syndicate.runtime_contracts import RuntimeIdentity, installed_runtime
 def test_actual_installed_runtime_is_pinned() -> None:
     identity = installed_runtime()
     assert identity.harbor_version == "0.22.0"
+    assert identity.e2b_version == "2.26.0"
     assert identity.nexau_version == "0.3.9"
     assert identity.nexau_commit == "35ee1861546db3cb280a6e17e38a74060d7c96c3"
     with pytest.raises(ValidationError):
@@ -24,3 +25,14 @@ def test_alternate_package_version_is_rejected() -> None:
 def test_alternate_source_commit_is_rejected() -> None:
     with pytest.raises(ValidationError):
         RuntimeIdentity(nexau_commit="0" * 40)  # type: ignore[arg-type]
+
+
+def test_alternate_e2b_version_is_rejected() -> None:
+    from importlib.metadata import version
+
+    def installed_version(package: str) -> str:
+        return "0.0.0" if package == "e2b" else version(package)
+
+    with patch("syndicate.runtime_contracts.version", side_effect=installed_version):
+        with pytest.raises(ValidationError, match="e2b_version"):
+            installed_runtime()
