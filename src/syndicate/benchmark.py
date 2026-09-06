@@ -11,6 +11,8 @@ from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.verifier import Verifier
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from syndicate.harbor_agent import CleanupReceipt
+
 
 class RunOutcome(StrEnum):
     PASS = "pass"
@@ -25,6 +27,7 @@ class VerifierReason(StrEnum):
     MISSING_RESULT = "missing_result"
     UNSUPPORTED_REWARD = "unsupported_reward"
     VERIFIER_ERROR = "verifier_error"
+    CLEANUP_INCOMPLETE = "cleanup_incomplete"
 
 
 class VerifierReceipt(BaseModel):
@@ -103,8 +106,15 @@ async def verify_with_harbor(
     paths: TrialPaths,
     environment: BaseEnvironment,
     raw_result_ref: str,
+    cleanup: CleanupReceipt,
 ) -> VerifierReceipt:
     """Invoke Harbor's unmodified verifier after P08c cleanup succeeds."""
+    if not cleanup.complete:
+        return VerifierReceipt(
+            outcome=RunOutcome.UNVERIFIED,
+            reason=VerifierReason.CLEANUP_INCOMPLETE,
+            raw_result_ref=raw_result_ref,
+        )
     return await verify(Verifier(task, paths, environment), raw_result_ref)
 
 
