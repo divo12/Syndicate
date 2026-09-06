@@ -4,10 +4,10 @@ import hashlib
 import json
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from syndicate.budget_policy import BudgetCap
 
@@ -54,6 +54,11 @@ class ArtifactKind(StrEnum):
     DIAGNOSIS = "diagnosis"
     SCHEDULE = "schedule"
     COMPARISON = "comparison"
+    EXPECTED_REPORTS = "expected_reports"
+    POLICY = "policy"
+    MEASUREMENTS = "measurements"
+    ASSESSMENT = "assessment"
+    LINEAGE = "lineage"
 
 
 class ArtifactRef(WireModel):
@@ -85,8 +90,16 @@ class JudgeTaskCommand(Command):
 
 class CollectReportsCommand(Command):
     operation: Literal[Operation.COLLECT_REPORTS] = Operation.COLLECT_REPORTS
-    expected_task_ids: tuple[str, ...] = Field(min_length=1)
+    expected_reports_ref: ArtifactRef
     report_refs: tuple[ArtifactRef, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def report_kinds(self) -> Self:
+        if self.expected_reports_ref.kind is not ArtifactKind.EXPECTED_REPORTS or any(
+            reference.kind is not ArtifactKind.REPORT for reference in self.report_refs
+        ):
+            raise ValueError("Collection references have invalid artifact kinds")
+        return self
 
 
 class ProposeHarnessCommand(Command):
@@ -102,14 +115,37 @@ class CompareHarnessCommand(Command):
     parent_harness_hash: Digest
     candidate_harness_hash: Digest
     schedule_ref: ArtifactRef
+    policy_ref: ArtifactRef
+    measurements_ref: ArtifactRef
     budget: BudgetCap
+
+    @model_validator(mode="after")
+    def comparison_kinds(self) -> Self:
+        if (
+            self.schedule_ref.kind is not ArtifactKind.SCHEDULE
+            or self.policy_ref.kind is not ArtifactKind.POLICY
+            or self.measurements_ref.kind is not ArtifactKind.MEASUREMENTS
+        ):
+            raise ValueError("Comparison references have invalid artifact kinds")
+        return self
 
 
 class SelectHarnessCommand(Command):
     operation: Literal[Operation.SELECT_HARNESS] = Operation.SELECT_HARNESS
     parent_harness_hash: Digest
     candidate_harness_hash: Digest
-    comparison_ref: ArtifactRef
+    candidate_memory_hash: Digest
+    assessment_ref: ArtifactRef
+    lineage_ref: ArtifactRef
+
+    @model_validator(mode="after")
+    def selection_kinds(self) -> Self:
+        if (
+            self.assessment_ref.kind is not ArtifactKind.ASSESSMENT
+            or self.lineage_ref.kind is not ArtifactKind.LINEAGE
+        ):
+            raise ValueError("Selection references have invalid artifact kinds")
+        return self
 
 
 type CommandRequest = Annotated[
