@@ -169,6 +169,7 @@ def test_wrong_task_grant_never_dispatches() -> None:
             task_id="task-b-1",
         ),
         trace_ref=GRANT.trace_ref,
+        expected_span_refs=GRANT.expected_span_refs,
         semantic_digest=GRANT.semantic_digest,
     )
 
