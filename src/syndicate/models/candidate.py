@@ -18,3 +18,15 @@ class CandidateWorkspace:
     incumbent: IncumbentSnapshot
     candidate_parent_hash: str
     allowed_paths: tuple[PurePosixPath, ...]
+
+
+class CandidateValidationError(ValueError):
+    """Candidate content escaped its declared editable surface."""
+
+
+@dataclass(frozen=True)
+class CandidateSeal:
+    parent_hash: str
+    candidate_hash: str
+    diff_hash: str
+    changed_paths: tuple[str, ...]
