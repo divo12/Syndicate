@@ -69,6 +69,11 @@ class ArtifactKind(StrEnum):
     DIAGNOSIS = "diagnosis"
     SCHEDULE = "schedule"
     COMPARISON = "comparison"
+    EXPECTED_REPORTS = "expected_reports"
+    POLICY = "policy"
+    MEASUREMENTS = "measurements"
+    ASSESSMENT = "assessment"
+    LINEAGE = "lineage"
 
 
 class ArtifactRef(WireModel):
