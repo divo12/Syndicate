@@ -16,6 +16,7 @@ from syndicate.benchmark import (
 from syndicate.budget_policy import BudgetCap, ProductRole
 from syndicate.evidence import EvidenceReader
 from syndicate.evidence_contracts import RecordCitation, RunEvidenceGrant
+from syndicate.harbor_agent import CleanupReceipt
 from syndicate.judge_contracts import JudgeAttempt, JudgeSpec, ReportStatus
 from syndicate.judge_dispatch import attempt_from_receipt, dispatch_judge, role_tools
 from syndicate.judging import JudgeEvidence, JudgeRegistry
@@ -42,6 +43,7 @@ def reader() -> EvidenceReader:
         run_id=RUN,
         task_id=LINK.task_id,
         cleanup_complete=True,
+        cleanup=CleanupReceipt(uid=10001, complete=True),
         outcome=RunOutcome.FAIL,
         verifier=verifier,
     )
