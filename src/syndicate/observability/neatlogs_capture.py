@@ -7,7 +7,7 @@ from typing import Protocol, cast
 from uuid import UUID
 
 import neatlogs  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class CaptureState(StrEnum):
@@ -34,13 +34,27 @@ class CaptureReceipt(BaseModel):
     expected_span_refs: tuple[str, ...] = ()
 
 
-class RedactedEvidence(BaseModel):
+class RedactionPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    provider_input: str = Field(min_length=1)
-    provider_output: str = Field(min_length=1)
-    model_input: str = Field(min_length=1)
-    model_output: str = Field(min_length=1)
+    secrets: tuple[SecretStr, ...] = Field(min_length=1)
+
+    @field_validator("secrets")
+    @classmethod
+    def nonempty_secrets(cls, values: tuple[SecretStr, ...]) -> tuple[SecretStr, ...]:
+        if any(not value.get_secret_value() for value in values):
+            raise ValueError("Configured secrets must be nonempty")
+        return values
+
+
+class _RedactedEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    provider_input: str
+    provider_output: str
+    model_input: str
+    model_output: str
+    count: int = Field(ge=1)
 
 
 class SpanContext(Protocol):
@@ -51,7 +65,7 @@ class SpanContext(Protocol):
 class SdkSpan(Protocol):
     def get_span_context(self) -> SpanContext: ...
 
-    def set_attribute(self, key: str, value: str | bool) -> None: ...
+    def set_attribute(self, key: str, value: str | bool | int) -> None: ...
 
 
 class CaptureSdk(Protocol):
@@ -108,7 +122,14 @@ class NeatlogsCapture:
         )
 
     def span(
-        self, link: RunLink, name: str, evidence: RedactedEvidence
+        self,
+        link: RunLink,
+        name: str,
+        provider_input: str,
+        provider_output: str,
+        model_input: str,
+        model_output: str,
+        policy: RedactionPolicy,
     ) -> AbstractContextManager[SdkSpan]:
         return _RedactedSpan(
             _TrackedSpan(
@@ -122,7 +143,9 @@ class NeatlogsCapture:
                 ),
                 self,
             ),
-            evidence,
+            self._redact(
+                provider_input, provider_output, model_input, model_output, policy
+            ),
         )
 
     def flush(self, link: RunLink) -> CaptureReceipt:
@@ -162,12 +185,39 @@ class NeatlogsCapture:
             return None
         return f"{value:0{width}x}"
 
+    def _redact(
+        self,
+        provider_input: str,
+        provider_output: str,
+        model_input: str,
+        model_output: str,
+        policy: RedactionPolicy,
+    ) -> _RedactedEvidence:
+        values: tuple[str, ...] = (
+            provider_input,
+            provider_output,
+            model_input,
+            model_output,
+        )
+        count = 0
+        for secret in policy.secrets:
+            raw = secret.get_secret_value()
+            count += sum(value.count(raw) for value in values)
+            values = tuple(value.replace(raw, "[REDACTED]") for value in values)
+        return _RedactedEvidence(
+            provider_input=values[0],
+            provider_output=values[1],
+            model_input=values[2],
+            model_output=values[3],
+            count=count,
+        )
+
 
 class _RedactedSpan(AbstractContextManager[SdkSpan]):
     def __init__(
         self,
         context: AbstractContextManager[SdkSpan, bool | None],
-        evidence: RedactedEvidence,
+        evidence: _RedactedEvidence,
     ) -> None:
         self._context = context
         self._evidence = evidence
@@ -179,6 +229,7 @@ class _RedactedSpan(AbstractContextManager[SdkSpan]):
         span.set_attribute("neatlogs.provider.input", self._evidence.provider_input)
         span.set_attribute("neatlogs.provider.output", self._evidence.provider_output)
         span.set_attribute("neatlogs.evidence.redacted", True)
+        span.set_attribute("neatlogs.evidence.redaction_count", self._evidence.count)
         return span
 
     def __exit__(
