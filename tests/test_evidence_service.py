@@ -5,8 +5,7 @@ from uuid import UUID
 import pytest
 from pydantic import SecretStr, TypeAdapter, ValidationError
 
-from syndicate.evidence import EvidenceReader
-from syndicate.evidence_contracts import (
+from syndicate.models.evidence import (
     Citation,
     EvidenceGrant,
     EvidenceStatus,
@@ -20,6 +19,7 @@ from syndicate.observability.neatlogs_readback import (
     NeatlogsReadbackReceipt,
     ReadbackSpan,
 )
+from syndicate.services.evidence import EvidenceReader
 
 
 def test_span_citation_preserves_remote_ids_without_uuid_coercion() -> None:
@@ -121,7 +121,7 @@ def test_citation_requires_authorized_persisted_complete_remote_evidence() -> No
 
 
 def test_search_finds_early_remote_span_and_pages_in_order() -> None:
-    from syndicate.evidence_contracts import TraceQuery
+    from syndicate.models.evidence import TraceQuery
 
     _, reader, citation = setup_reader(120)
     query = TraceQuery(
@@ -138,7 +138,7 @@ def test_search_finds_early_remote_span_and_pages_in_order() -> None:
 
 
 def test_remote_context_is_bounded_and_tail_is_readable() -> None:
-    from syndicate.evidence_contracts import SpanQuery
+    from syndicate.models.evidence import SpanQuery
 
     _, reader, citation = setup_reader(3)
     query = SpanQuery(
@@ -187,7 +187,7 @@ def test_remote_failure_never_resolves_citation(
 
 
 def test_manifest_returns_control_metadata_only_and_changed_cursor_fails() -> None:
-    from syndicate.evidence_contracts import TraceQuery
+    from syndicate.models.evidence import TraceQuery
 
     _, reader, citation = setup_reader(2)
     overview = reader.get_trace_manifest(citation.run_id, citation.trace_ref)

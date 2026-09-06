@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from syndicate.judge_contracts import JudgeBuildRequest, JudgeDraft, JudgeSpec
+from syndicate.models.judging import JudgeBuildRequest, JudgeDraft, JudgeSpec
 
 BUILDER_PROMPT = """Generate criteria from only the supplied public goal, policy,
 tool metadata and public criterion references. Quote exact supporting text and

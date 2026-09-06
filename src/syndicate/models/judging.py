@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.budget_policy import BudgetCap
+from syndicate.models.budget import BudgetCap
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 

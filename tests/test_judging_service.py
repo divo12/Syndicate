@@ -3,8 +3,8 @@ from collections.abc import Callable
 import pytest
 from pydantic import ValidationError
 
-from syndicate.budget_policy import BudgetCap
-from syndicate.judge_contracts import (
+from syndicate.models.budget import BudgetCap
+from syndicate.models.judging import (
     Criterion,
     CriterionStatus,
     EvidenceKind,
@@ -14,7 +14,7 @@ from syndicate.judge_contracts import (
     RequirementKind,
     SupportQuote,
 )
-from syndicate.judging import JudgeRegistry
+from syndicate.services.judging import JudgeRegistry
 
 
 def request() -> JudgeBuildRequest:

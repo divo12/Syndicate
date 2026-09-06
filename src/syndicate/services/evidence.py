@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from syndicate.evidence_contracts import (
+from syndicate.models.evidence import (
     Citation,
     CitationValidation,
     EvidenceGrant,
