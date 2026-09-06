@@ -8,6 +8,8 @@ type JsonObject = Readonly<Record<string, unknown>>;
 
 export type CommandStatus = "completed" | "failed" | "blocked" | "cancelled";
 
+export type ObservationStatus = "success" | "warning" | "error";
+
 export type ArtifactRef = Readonly<{
   kind: string;
   operation_id: string;
@@ -35,7 +37,11 @@ export type PythonInvocation = Readonly<{
 }>;
 
 export type TransportResult = Readonly<{
-  receipt: CommandReceipt;
+  status: ObservationStatus;
+  summary: string;
+  next_actions: readonly string[];
+  artifacts: readonly string[];
+  receipt?: CommandReceipt;
   stderr: string;
 }>;
 
@@ -97,6 +103,19 @@ function isArtifactRef(value: unknown): value is ArtifactRef {
     typeof raw.attempt_id === "string" &&
     typeof raw.sha256 === "string"
   );
+}
+
+function observation(
+  status: ObservationStatus,
+  summary: string,
+  next_actions: readonly string[],
+  artifacts: readonly string[],
+  stderr: string,
+  receipt?: CommandReceipt,
+): TransportResult {
+  return receipt === undefined
+    ? { status, summary, next_actions, artifacts, stderr }
+    : { status, summary, next_actions, artifacts, stderr, receipt };
 }
 
 async function validatePaths(input: PythonInvocation): Promise<void> {
@@ -171,6 +190,31 @@ async function execute(input: PythonInvocation): Promise<{
   });
 }
 
+function stoppedObservation(
+  input: PythonInvocation,
+  stderr: string,
+): TransportResult {
+  if (input.signal?.aborted) {
+    return observation(
+      "error",
+      "Python command stopped at cancellation",
+      ["stop: AbortSignal already fired; do not retry this invocation"],
+      [],
+      stderr,
+    );
+  }
+  return observation(
+    "error",
+    "Python command stopped at deadline",
+    [
+      "retry: raise timeoutMs once and re-invoke with a fresh signal",
+      "stop: if the controller is still hung after one retry",
+    ],
+    [],
+    stderr,
+  );
+}
+
 export async function invokePython(input: PythonInvocation): Promise<TransportResult> {
   if (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0) {
     throw new TransportError("Timeout must be a positive integer");
@@ -178,10 +222,29 @@ export async function invokePython(input: PythonInvocation): Promise<TransportRe
   await validatePaths(input);
   const result = await execute(input);
   if (result.stopped) {
-    throw new TransportError("Python command stopped at cancellation or deadline");
+    return stoppedObservation(input, result.stderr);
   }
   if (result.code !== 0) {
     throw new TransportError(`Python command exited ${String(result.code)}`);
   }
-  return { receipt: receiptFrom(result.stdout, input), stderr: result.stderr };
+  const receipt = receiptFrom(result.stdout, input);
+  const artifacts = receipt.artifact_refs.map((item) => item.sha256);
+  if (receipt.status === "completed") {
+    return observation(
+      "success",
+      "Python command completed with one receipt",
+      ["read receipt.artifact_refs"],
+      artifacts,
+      result.stderr,
+      receipt,
+    );
+  }
+  return observation(
+    "warning",
+    `Python command returned ${receipt.status}`,
+    [`inspect receipt.status=${receipt.status} and stderr before retrying`],
+    artifacts,
+    result.stderr,
+    receipt,
+  );
 }

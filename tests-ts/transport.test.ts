@@ -55,8 +55,10 @@ test("invokes the pinned CLI with one matching receipt and preserves stderr logs
     timeoutMs: 1_000,
     environment: { PATH: process.env.PATH ?? "" },
   });
-  assert.equal(result.receipt.status, "completed");
+  assert.equal(result.status, "success");
+  assert.equal(result.receipt?.status, "completed");
   assert.equal(result.stderr, "controller log\n");
+  assert.deepEqual(result.next_actions, ["read receipt.artifact_refs"]);
 });
 
 test("rejects multiple stdout receipts", async () => {
@@ -75,33 +77,34 @@ test("rejects multiple stdout receipts", async () => {
 
 test("terminates an owned process group at its deadline", async () => {
   const input = await fixture("slow");
-  await assert.rejects(
-    invokePython({
-      ...input,
-      operationId: OPERATION_ID,
-      attemptId: ATTEMPT_ID,
-      timeoutMs: 25,
-      environment: { PATH: process.env.PATH ?? "" },
-    }),
-    /deadline/,
-  );
+  const result = await invokePython({
+    ...input,
+    operationId: OPERATION_ID,
+    attemptId: ATTEMPT_ID,
+    timeoutMs: 25,
+    environment: { PATH: process.env.PATH ?? "" },
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.summary, /deadline/);
+  assert.match(result.next_actions[0] ?? "", /retry/);
+  assert.match(result.next_actions[1] ?? "", /stop/);
 });
 
 test("cancels an already-aborted invocation", async () => {
   const input = await fixture("slow");
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(
-    invokePython({
-      ...input,
-      operationId: OPERATION_ID,
-      attemptId: ATTEMPT_ID,
-      timeoutMs: 1_000,
-      environment: { PATH: process.env.PATH ?? "" },
-      signal: controller.signal,
-    }),
-    /cancellation/,
-  );
+  const result = await invokePython({
+    ...input,
+    operationId: OPERATION_ID,
+    attemptId: ATTEMPT_ID,
+    timeoutMs: 1_000,
+    environment: { PATH: process.env.PATH ?? "" },
+    signal: controller.signal,
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.summary, /cancellation/);
+  assert.match(result.next_actions[0] ?? "", /stop/);
 });
 
 test("refuses a request outside its controller-owned run directory", async () => {
