@@ -32,3 +32,7 @@ To intentionally refresh transitive pins, regenerate and review the compact lock
 uv pip compile pyproject.toml --extra dev --group build --universal \
   --no-header --no-annotate -o requirements.lock
 ```
+
+Run offline campaign checks with
+`.venv/bin/python -m syndicate.cli preflight --config campaign.json`.
+See [preflight setup](docs/preflight.md) for an example configuration and outputs.
