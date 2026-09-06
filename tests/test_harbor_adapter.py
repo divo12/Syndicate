@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, call, create_autospec
+from uuid import uuid4
 
 from harbor.agents.factory import AgentFactory
 from harbor.environments.base import BaseEnvironment, ExecResult
@@ -8,6 +9,7 @@ from pydantic import SecretStr
 from test_runtime_request import request
 
 from syndicate.harbor_adapter import KEY_PATH, REQUEST_PATH, SyndicateNexAUAgent
+from syndicate.stock_receipt import ControllerTrialBinding, load_cleanup_receipt
 
 
 def test_native_import_path_runs_only_after_settled_agent_cleanup(
@@ -35,6 +37,10 @@ def test_native_import_path_runs_only_after_settled_agent_cleanup(
         api_key=SecretStr("fixture"),
     )
     assert isinstance(agent, SyndicateNexAUAgent)
+    binding = ControllerTrialBinding(
+        operation_id=uuid4(), attempt_id=uuid4(), run_id=uuid4(), task_id="task-a-1"
+    )
+    agent.bind_controller_receipt(binding, tmp_path)
 
     async def exercise() -> None:
         await agent.setup(environment)
@@ -42,6 +48,7 @@ def test_native_import_path_runs_only_after_settled_agent_cleanup(
 
     asyncio.run(exercise())
     assert agent.cleanup_receipt is not None and agent.cleanup_receipt.complete
+    assert load_cleanup_receipt(binding, tmp_path).cleanup == agent.cleanup_receipt
     assert environment.upload_dir.await_args.args[1] == "/run/syndicate/harness"
     assert environment.upload_file.await_args_list[0].args[1] == REQUEST_PATH
     assert environment.upload_file.await_args_list[1].args[1] == KEY_PATH

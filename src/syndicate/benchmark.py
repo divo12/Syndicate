@@ -1,5 +1,6 @@
 """Trusted Harbor verifier classification without copying its payload locally."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, Self
 from uuid import UUID
@@ -66,6 +67,8 @@ class RunReceipt(BaseModel):
     cleanup: CleanupReceipt
     outcome: RunOutcome
     verifier: VerifierReceipt
+    agent_finished_at: datetime | None = None
+    verifier_started_at: datetime | None = None
 
     @model_validator(mode="after")
     def coherent(self) -> Self:

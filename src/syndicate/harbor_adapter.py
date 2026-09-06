@@ -1,6 +1,7 @@
 """Native Harbor agent that launches the approved NexAU runtime in a task world."""
 
 import tempfile
+from datetime import UTC, datetime
 from logging import Logger
 from pathlib import Path, PurePosixPath
 from typing import override
@@ -13,6 +14,7 @@ from pydantic import SecretStr
 
 from syndicate.harbor_agent import CleanupReceipt, HarborAgent, runtime_command
 from syndicate.runtime_contracts import RuntimeRequest
+from syndicate.stock_receipt import ControllerTrialBinding, emit_cleanup_receipt
 
 REQUEST_PATH = "/run/syndicate/request.json"
 KEY_PATH = "/run/syndicate/api-key"
@@ -49,6 +51,8 @@ class SyndicateNexAUAgent(BaseAgent):
         self.request = request
         self.api_key = api_key
         self.cleanup_receipt: CleanupReceipt | None = None
+        self._controller_binding: ControllerTrialBinding | None = None
+        self._controller_root: Path | None = None
 
     @staticmethod
     @override
@@ -75,6 +79,13 @@ class SyndicateNexAUAgent(BaseAgent):
             user="root",
         )
 
+    def bind_controller_receipt(
+        self, binding: ControllerTrialBinding, controller_root: Path
+    ) -> None:
+        """Bind controller IDs before stock Harbor invokes this agent."""
+        self._controller_binding = binding
+        self._controller_root = controller_root
+
     @override
     async def run(
         self,
@@ -85,3 +96,10 @@ class SyndicateNexAUAgent(BaseAgent):
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
         self.cleanup_receipt = await HarborAgent(environment).run(runtime_command())
+        if self._controller_binding is not None and self._controller_root is not None:
+            emit_cleanup_receipt(
+                self._controller_binding,
+                self.cleanup_receipt,
+                self._controller_root,
+                datetime.now(UTC),
+            )
