@@ -4,11 +4,11 @@ from enum import StrEnum
 from typing import Protocol, Self
 from uuid import UUID
 
-from harbor.environments.base import BaseEnvironment
-from harbor.models.task.task import Task
-from harbor.models.trial.paths import TrialPaths
-from harbor.models.verifier.result import VerifierResult
-from harbor.verifier.verifier import Verifier
+from harbor.environments.base import BaseEnvironment  # type: ignore[import-untyped]
+from harbor.models.task.task import Task  # type: ignore[import-untyped]
+from harbor.models.trial.paths import TrialPaths  # type: ignore[import-untyped]
+from harbor.models.verifier.result import VerifierResult  # type: ignore[import-untyped]
+from harbor.verifier.verifier import Verifier  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
