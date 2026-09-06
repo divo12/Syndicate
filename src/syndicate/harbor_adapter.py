@@ -4,21 +4,38 @@ import tempfile
 from logging import Logger
 from pathlib import Path, PurePosixPath
 from typing import override
+from weakref import WeakKeyDictionary
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import MCPServerConfig
-from harbor.models.task.task import Task
-from harbor.models.trial.paths import TrialPaths
+from harbor.models.verifier.result import VerifierResult
+from harbor.verifier.base import BaseVerifier
 from pydantic import SecretStr
 
-from syndicate.benchmark import VerifierReceipt, verify_with_harbor
+from syndicate.benchmark import verify_with_harbor
 from syndicate.harbor_agent import CleanupReceipt, HarborAgent, runtime_command
 from syndicate.runtime_contracts import RuntimeRequest
 
 REQUEST_PATH = "/run/syndicate/request.json"
 KEY_PATH = "/run/syndicate/api-key"
+HARNESS_PATH = "/run/syndicate/harness"
+HARNESS_SOURCE = Path(__file__).parents[2] / "harnesses/seed"
+
+
+class _CleanupProofs:
+    """Transient handoff between Harbor's sequential agent and verifier phases."""
+
+    _receipts: WeakKeyDictionary[BaseEnvironment, CleanupReceipt] = WeakKeyDictionary()
+
+    @classmethod
+    def record(cls, environment: BaseEnvironment, receipt: CleanupReceipt) -> None:
+        cls._receipts[environment] = receipt
+
+    @classmethod
+    def take(cls, environment: BaseEnvironment) -> CleanupReceipt | None:
+        return cls._receipts.pop(environment, None)
 
 
 class SyndicateNexAUAgent(BaseAgent):
@@ -62,6 +79,7 @@ class SyndicateNexAUAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await environment.exec(command="mkdir -p /run/syndicate", user="root")
+        await environment.upload_dir(HARNESS_SOURCE, HARNESS_PATH)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             request_path = root / "request.json"
@@ -70,7 +88,12 @@ class SyndicateNexAUAgent(BaseAgent):
             key_path.write_text(self.api_key.get_secret_value())
             await environment.upload_file(request_path, REQUEST_PATH)
             await environment.upload_file(key_path, KEY_PATH)
-        await environment.exec(command=f"chmod 600 {KEY_PATH}", user="root")
+        await environment.exec(
+            command=(
+                f"chown -R 10001:10001 /run/syndicate && chmod 600 {KEY_PATH}"
+            ),
+            user="root",
+        )
 
     @override
     async def run(
@@ -82,17 +105,28 @@ class SyndicateNexAUAgent(BaseAgent):
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
         self.cleanup_receipt = await HarborAgent(environment).run(runtime_command())
+        _CleanupProofs.record(environment, self.cleanup_receipt)
 
-    async def verify(
-        self,
-        task: Task,
-        paths: TrialPaths,
-        environment: BaseEnvironment,
-        raw_result_ref: str,
-    ) -> VerifierReceipt:
-        """Preserve Harbor's verifier and require this run's cleanup proof."""
-        if self.cleanup_receipt is None:
-            raise RuntimeError("Agent cleanup proof is required before verification")
-        return await verify_with_harbor(
-            task, paths, environment, raw_result_ref, self.cleanup_receipt
+
+class SyndicateHarborVerifier(BaseVerifier):
+    """Harbor verifier registration that consumes the agent's settled cleanup proof."""
+
+    @classmethod
+    def import_path(cls) -> str:
+        return f"{cls.__module__}:{cls.__name__}"
+
+    @override
+    async def verify(self) -> VerifierResult:
+        cleanup = _CleanupProofs.take(self.environment)
+        if cleanup is None or self.environment.context_id is None:
+            return VerifierResult()
+        receipt = await verify_with_harbor(
+            self.task,
+            self.trial_paths,
+            self.environment,
+            f"harbor:{self.environment.context_id}",
+            cleanup,
+        )
+        return VerifierResult(
+            rewards={"reward": receipt.reward} if receipt.reward is not None else None
         )
