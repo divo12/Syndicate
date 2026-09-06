@@ -10,12 +10,12 @@ from nexau.archs.main_sub.execution.stop_reason import AgentStopReason
 from openai import OpenAI
 from pydantic import SecretStr
 
-from syndicate.baseline import PromptVariables, prepare_baseline
-from syndicate.budget_policy import BudgetCap
-from syndicate.model_config import ModelSettings
-from syndicate.nexau_runtime import RuntimeStopped, run_on_controller
-from syndicate.runtime_contracts import RuntimeRequest
-from syndicate.shell import ShellExecution, ShellStatus
+from syndicate.models.baseline import PromptVariables, prepare_baseline
+from syndicate.models.budget import BudgetCap
+from syndicate.models.model_config import ModelSettings
+from syndicate.models.runtime import RuntimeRequest
+from syndicate.models.shell import ShellExecution, ShellStatus
+from syndicate.services.runtime import RuntimeStopped, run_on_controller
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,8 +101,10 @@ def runtime_fixture(iterations: int) -> tuple[RuntimeRequest, OpenAI, list[bytes
 def test_iteration_limit_is_explicit() -> None:
     request, client, calls = runtime_fixture(1)
     with (
-        patch("syndicate.nexau_runtime.OpenAI", return_value=client),
-        patch("syndicate.nexau_runtime.E2BShell", return_value=AsyncMock()) as backend,
+        patch("syndicate.services.runtime.OpenAI", return_value=client),
+        patch(
+            "syndicate.services.runtime.E2BShell", return_value=AsyncMock()
+        ) as backend,
         asyncio.Runner() as runner,
     ):
         with pytest.raises(RuntimeStopped) as stopped:
@@ -134,8 +136,8 @@ def test_real_nexau_tool_cycle_without_model() -> None:
         ShellExecution(stdout="shell-ok", exit_code=0),
     ]
     with (
-        patch("syndicate.nexau_runtime.OpenAI", return_value=client),
-        patch("syndicate.nexau_runtime.E2BShell", return_value=shell) as backend,
+        patch("syndicate.services.runtime.OpenAI", return_value=client),
+        patch("syndicate.services.runtime.E2BShell", return_value=shell) as backend,
         asyncio.Runner() as runner,
     ):
         result = runner.run(
@@ -161,7 +163,7 @@ def test_changed_baseline_never_opens_shell(tmp_path: Path) -> None:
     request, client, calls = runtime_fixture(4)
     lock = tmp_path / "requirements.lock"
     lock.write_text("changed framework lock\n")
-    with client, patch("syndicate.nexau_runtime.E2BShell") as backend:
+    with client, patch("syndicate.services.runtime.E2BShell") as backend:
         with asyncio.Runner() as runner:
             with pytest.raises(ValueError, match="baseline differs"):
                 runner.run(
@@ -193,8 +195,8 @@ def test_provider_failure_closes_shell_without_retry() -> None:
     )
     shell = AsyncMock()
     with (
-        patch("syndicate.nexau_runtime.OpenAI", return_value=client),
-        patch("syndicate.nexau_runtime.E2BShell", return_value=shell),
+        patch("syndicate.services.runtime.OpenAI", return_value=client),
+        patch("syndicate.services.runtime.E2BShell", return_value=shell),
         asyncio.Runner() as runner,
     ):
         with pytest.raises(RuntimeError):

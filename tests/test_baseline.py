@@ -6,8 +6,8 @@ from shutil import copytree
 
 import pytest
 
-from syndicate.baseline import BaselineStage, PromptVariables, prepare_baseline
-from syndicate.model_config import ModelSettings
+from syndicate.models.baseline import BaselineStage, PromptVariables, prepare_baseline
+from syndicate.models.model_config import ModelSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIABLES = PromptVariables(

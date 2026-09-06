@@ -8,9 +8,9 @@ from harbor.models.trial.config import TaskConfig, TrialConfig
 from harbor.models.trial.result import AgentInfo, TimingInfo, TrialResult
 from harbor.models.verifier.result import VerifierResult
 
-from syndicate.benchmark import RunOutcome
-from syndicate.harbor_agent import CleanupReceipt
-from syndicate.stock_receipt import (
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.services.benchmark import RunOutcome
+from syndicate.services.stock import (
     CleanupControlReceipt,
     ControllerTrialBinding,
     emit_cleanup_receipt,
@@ -87,7 +87,7 @@ def test_failed_write_leaves_no_partial_receipt(
     def fail_sync(descriptor: int) -> None:
         raise OSError("disk failed")
 
-    monkeypatch.setattr("syndicate.stock_receipt.os.fsync", fail_sync)
+    monkeypatch.setattr("syndicate.services.stock.os.fsync", fail_sync)
     with pytest.raises(OSError, match="disk failed"):
         emit_cleanup_receipt(identity, cleanup(identity).cleanup, tmp_path, ENDED)
     assert not [p for p in tmp_path.rglob("*") if p.is_file()]

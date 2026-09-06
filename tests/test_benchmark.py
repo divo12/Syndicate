@@ -4,7 +4,8 @@ from uuid import uuid4
 import pytest
 from harbor.models.verifier.result import VerifierResult
 
-from syndicate.benchmark import (
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.services.benchmark import (
     RunOutcome,
     RunReceipt,
     VerifierReason,
@@ -12,7 +13,6 @@ from syndicate.benchmark import (
     classify_verifier,
     verify,
 )
-from syndicate.harbor_agent import CleanupReceipt
 
 CLEANUP = CleanupReceipt(uid=10001, complete=True)
 

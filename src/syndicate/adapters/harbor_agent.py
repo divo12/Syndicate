@@ -7,8 +7,8 @@ from e2b import AsyncSandbox
 from e2b.sandbox.commands.command_handle import CommandExitException
 from pydantic import BaseModel, ConfigDict, SecretStr
 
-from syndicate.nexau_runtime import run_on_controller
-from syndicate.runtime_contracts import RuntimeRequest
+from syndicate.models.runtime import RuntimeRequest
+from syndicate.services.runtime import run_on_controller
 
 
 class CleanupReceipt(BaseModel):

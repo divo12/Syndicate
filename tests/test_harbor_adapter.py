@@ -13,9 +13,9 @@ from harbor.models.agent.context import AgentContext
 from pydantic import SecretStr
 from test_runtime_request import request
 
-from syndicate.harbor_adapter import SyndicateNexAUAgent
-from syndicate.harbor_agent import CleanupReceipt
-from syndicate.stock_receipt import ControllerTrialBinding, load_cleanup_receipt
+from syndicate.adapters.harbor_adapter import SyndicateNexAUAgent
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.services.stock import ControllerTrialBinding, load_cleanup_receipt
 
 
 def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
@@ -34,7 +34,7 @@ def test_factory_uses_harbors_sandbox_without_uploads(tmp_path: Path) -> None:
         framework_lock=tmp_path / "lock",
     )
     assert isinstance(agent, SyndicateNexAUAgent)
-    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+    with patch("syndicate.adapters.harbor_adapter.HarborAgent") as lifecycle:
         lifecycle.return_value.run = AsyncMock(
             return_value=CleanupReceipt(uid=10001, complete=True)
         )
@@ -71,7 +71,7 @@ def test_failed_admission_or_execution_has_no_receipt(
         return_value=CommandResult(exit_code=1, stdout="", stderr="", error=None)
     )
     agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
-    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+    with patch("syndicate.adapters.harbor_adapter.HarborAgent") as lifecycle:
         lifecycle.return_value.run = AsyncMock(side_effect=RuntimeError("failed"))
 
         async def exercise() -> None:
@@ -107,7 +107,7 @@ def test_harbor_deadline_aborts_instead_of_becoming_verifier_eligible(
     environment._sandbox = create_autospec(AsyncSandbox, instance=True)
     agent = SyndicateNexAUAgent(tmp_path, request(), SecretStr("fixture"))
 
-    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+    with patch("syndicate.adapters.harbor_adapter.HarborAgent") as lifecycle:
 
         async def run_controller(*args: object) -> CleanupReceipt:
             await asyncio.sleep(10)
@@ -140,7 +140,7 @@ def test_stock_receipt_requires_successful_controller_run(
         task_id="task-a-1",
     )
     agent.bind_controller_receipt(binding, tmp_path)
-    with patch("syndicate.harbor_adapter.HarborAgent") as lifecycle:
+    with patch("syndicate.adapters.harbor_adapter.HarborAgent") as lifecycle:
         lifecycle.return_value.run = AsyncMock(
             return_value=CleanupReceipt(complete=True),
             side_effect=RuntimeError("controller failed") if failed else None,

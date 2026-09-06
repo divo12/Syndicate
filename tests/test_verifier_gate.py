@@ -9,8 +9,8 @@ from harbor.models.task.task import Task
 from harbor.models.trial.paths import TrialPaths
 from harbor.models.verifier.result import VerifierResult
 
-from syndicate.benchmark import RunOutcome, verify_with_harbor
-from syndicate.harbor_agent import CleanupReceipt
+from syndicate.adapters.harbor_agent import CleanupReceipt
+from syndicate.services.benchmark import RunOutcome, verify_with_harbor
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -20,7 +20,7 @@ def test_verifier_requires_cleanup_proof(complete: bool) -> None:
         Mock(spec=TrialPaths),
         Mock(spec=BaseEnvironment),
     )
-    with patch("syndicate.benchmark.Verifier") as factory:
+    with patch("syndicate.services.benchmark.Verifier") as factory:
         factory.return_value.verify = AsyncMock(
             return_value=VerifierResult(rewards={"reward": 1})
         )

@@ -10,7 +10,7 @@ Install the pinned controller dependencies from the repository root:
 uv venv --python 3.13.7
 uv pip sync requirements.lock
 uv pip install --no-deps --no-build-isolation -e .
-.venv/bin/python -c 'from syndicate.runtime_contracts import installed_runtime; print(installed_runtime().model_dump_json())'
+.venv/bin/python -c 'from syndicate.models.runtime import installed_runtime; print(installed_runtime().model_dump_json())'
 ```
 
 The offline identity check verifies Harbor 0.22.0, E2B 2.26.0, and NexAU 0.3.9

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from syndicate.benchmark_manifest import (
+from syndicate.repositories.benchmark_manifest import (
     ITSMBENCH_REVISION,
     Assignment,
     BenchmarkManifest,
@@ -75,13 +75,17 @@ docker_image = "image:declared"
         "fixture",
     )
     revision = git(tmp_path, "rev-parse", "HEAD")
-    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+    with patch(
+        "syndicate.repositories.benchmark_manifest.ITSMBENCH_REVISION", revision
+    ):
         yield tmp_path, revision
 
 
 def load(checkout: tuple[Path, str]) -> BenchmarkManifest:
     root, revision = checkout
-    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+    with patch(
+        "syndicate.repositories.benchmark_manifest.ITSMBENCH_REVISION", revision
+    ):
         return BenchmarkManifest.load(
             root,
             revision,
@@ -228,7 +232,10 @@ def test_original_instruction_whitespace_preserved(checkout: tuple[Path, str]) -
         "goal",
     )
     manifest = load((root, git(root, "rev-parse", "HEAD")))
-    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", manifest.revision):
+    with patch(
+        "syndicate.repositories.benchmark_manifest.ITSMBENCH_REVISION",
+        manifest.revision,
+    ):
         assert manifest.public_inputs(Split.DEVELOPMENT)[0].instruction == "  Goal\n\n"
 
 
@@ -266,7 +273,9 @@ def test_canonical_pin_rejects_clean_alternate_head(checkout: tuple[Path, str]) 
         "alternate",
     )
     alternate = git(root, "rev-parse", "HEAD")
-    with patch("syndicate.benchmark_manifest.ITSMBENCH_REVISION", revision):
+    with patch(
+        "syndicate.repositories.benchmark_manifest.ITSMBENCH_REVISION", revision
+    ):
         with pytest.raises(ValueError, match="canonical"):
             BenchmarkManifest.load(root, alternate, (manifest.tasks[0].assignment,))
         with pytest.raises(ValueError, match="canonical"):

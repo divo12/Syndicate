@@ -15,12 +15,12 @@ from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import MCPServerConfig
 from pydantic import SecretStr
 
-from syndicate.harbor_agent import CleanupReceipt, HarborAgent
-from syndicate.runtime_contracts import RuntimeRequest
-from syndicate.stock_receipt import ControllerTrialBinding, emit_cleanup_receipt
+from syndicate.adapters.harbor_agent import CleanupReceipt, HarborAgent
+from syndicate.models.runtime import RuntimeRequest
+from syndicate.services.stock import ControllerTrialBinding, emit_cleanup_receipt
 
-HARNESS_SOURCE = Path(__file__).parents[2] / "harnesses/seed"
-FRAMEWORK_LOCK = Path(__file__).parents[2] / "requirements.lock"
+HARNESS_SOURCE = Path(__file__).parents[3] / "harnesses/seed"
+FRAMEWORK_LOCK = Path(__file__).parents[3] / "requirements.lock"
 
 
 def _sandbox(environment: BaseEnvironment) -> AsyncSandbox:

@@ -7,9 +7,9 @@ from typing import Literal, Self
 from nexau.archs.main_sub.execution.stop_reason import AgentStopReason
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syndicate.baseline import BaselineManifest
-from syndicate.budget_policy import BudgetCap, ProductRole
-from syndicate.model_config import ModelSettings
+from syndicate.models.baseline import BaselineManifest
+from syndicate.models.budget import BudgetCap, ProductRole
+from syndicate.models.model_config import ModelSettings
 
 
 class RuntimeIdentity(BaseModel):

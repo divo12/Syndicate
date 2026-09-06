@@ -4,8 +4,8 @@ import asyncio
 
 from e2b import AsyncSandbox
 
-from syndicate.shell import ShellRequest, ShellStatus
-from syndicate.shell_backend import E2BShell
+from syndicate.adapters.e2b_shell import E2BShell
+from syndicate.models.shell import ShellRequest, ShellStatus
 
 
 async def smoke() -> None:
