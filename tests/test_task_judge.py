@@ -16,9 +16,9 @@ from syndicate.judge_contracts import (
 from syndicate.judging import JudgeRegistry, validate_report
 from syndicate.observability.neatlogs_capture import RunLink
 from syndicate.observability.neatlogs_readback import (
+    ExpectedTrace,
     NeatlogsReadbackReader,
     NeatlogsReadbackReceipt,
-    NeatlogsTraceRef,
     ReadbackSpan,
 )
 
@@ -28,7 +28,12 @@ SPAN = "b" * 16
 LINK = RunLink(
     task_id="task-a-1", operation_id=UUID(int=2), attempt_id=UUID(int=3), run_id=RUN
 )
-GRANT = EvidenceGrant(link=LINK, trace_ref=TRACE, semantic_digest="sha256:" + "c" * 64)
+GRANT = EvidenceGrant(
+    link=LINK,
+    trace_ref=TRACE,
+    expected_span_refs=(SPAN,),
+    semantic_digest="sha256:" + "c" * 64,
+)
 CITE = SpanCitation(run_id=RUN, trace_ref=TRACE, span_ref=SPAN)
 
 
@@ -37,9 +42,7 @@ class Remote(NeatlogsReadbackReader):
         super().__init__(SecretStr("fixture"))
         self.complete = complete
 
-    def read(
-        self, link: RunLink, trace_ref: NeatlogsTraceRef
-    ) -> NeatlogsReadbackReceipt:
+    def fetch(self, expected: ExpectedTrace) -> NeatlogsReadbackReceipt:
         return NeatlogsReadbackReceipt(
             link=LINK,
             trace_ref=TRACE,
@@ -143,6 +146,7 @@ def test_every_assigned_run_must_be_accounted_and_reward_cannot_be_overridden() 
             run_id=UUID(int=6),
         ),
         trace_ref="d" * 32,
+        expected_span_refs=(SPAN,),
         semantic_digest=GRANT.semantic_digest,
     )
     with pytest.raises(ValueError, match="assigned runs"):
@@ -176,6 +180,7 @@ def test_grant_from_another_task_is_rejected() -> None:
             run_id=RUN,
         ),
         trace_ref=TRACE,
+        expected_span_refs=(SPAN,),
         semantic_digest=GRANT.semantic_digest,
     )
     with pytest.raises(ValueError, match="another task"):
