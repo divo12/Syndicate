@@ -1,18 +1,23 @@
 from uuid import UUID
 
+from test_task_judge import GRANT, Remote
+
 from syndicate.benchmark import (
     RunOutcome,
     RunReceipt,
     VerifierReason,
     VerifierReceipt,
 )
-from syndicate.evidence_contracts import EvidenceStatus
-from syndicate.run_evidence import RunEvidenceKind, RunEvidenceQuery, RunEvidenceReader
+from syndicate.evidence import EvidenceReader
+from syndicate.evidence_contracts import (
+    EvidenceStatus,
+    RecordCitation,
+    RunEvidenceGrant,
+)
 
 
 def receipt(
-    cleanup_complete: bool = True,
-    outcome: RunOutcome = RunOutcome.FAIL,
+    cleanup_complete: bool = True, outcome: RunOutcome = RunOutcome.FAIL
 ) -> RunReceipt:
     verifier = VerifierReceipt(
         outcome=outcome,
@@ -35,60 +40,50 @@ def receipt(
     )
 
 
-def query(kind: RunEvidenceKind) -> RunEvidenceQuery:
-    return RunEvidenceQuery(
+def grant() -> RunEvidenceGrant:
+    return RunEvidenceGrant(
         operation_id=UUID(int=1),
         attempt_id=UUID(int=2),
         run_id=UUID(int=3),
         task_id="task-a-1",
-        kind=kind,
+        record_ref="harbor:opaque",
     )
 
 
-def test_run_and_verifier_evidence_share_controller_granted_receipt() -> None:
-    reader = RunEvidenceReader((receipt(),))
-    run = reader.read_run_record(query(RunEvidenceKind.RUN_RECORD))
-    verifier = reader.read_verifier_result(query(RunEvidenceKind.VERIFIER_RESULT))
-    assert run.status is EvidenceStatus.RESOLVED
-    assert run.receipt == receipt()
-    assert verifier.status is EvidenceStatus.RESOLVED
-    assert verifier.receipt == receipt().verifier
-    assert verifier.citation is not None
-    assert verifier.citation.run_id == receipt().run_id
-    assert verifier.citation.record_ref == "harbor:opaque"
+def citation() -> RecordCitation:
+    return RecordCitation(run_id=UUID(int=3), record_ref="harbor:opaque")
 
 
-def test_wrong_controller_correlation_is_forbidden() -> None:
-    reader = RunEvidenceReader((receipt(),))
-    wrong = query(RunEvidenceKind.VERIFIER_RESULT).model_copy(
-        update={"attempt_id": UUID(int=99)}
+def reader(receipts: tuple[RunReceipt, ...] = (receipt(),)) -> EvidenceReader:
+    return EvidenceReader(Remote(), (GRANT,), (grant(),), receipts)
+
+
+def test_granted_record_resolves_and_returns_nonpayload_views() -> None:
+    value = reader()
+    assert value.validate_citation(citation()).status is EvidenceStatus.RESOLVED
+    assert value.read_run_record(citation()).receipt == receipt()
+    assert value.read_verifier_result(citation()).receipt == receipt().verifier
+
+
+def test_missing_grant_or_receipt_never_resolves() -> None:
+    missing = reader(())
+    assert missing.validate_citation(citation()).status is EvidenceStatus.MISSING
+    ungranted = RecordCitation(run_id=UUID(int=99), record_ref="harbor:opaque")
+    assert reader().validate_citation(ungranted).status is EvidenceStatus.FORBIDDEN
+
+
+def test_identity_or_reference_mismatch_is_misaligned() -> None:
+    wrong_ref = RecordCitation(run_id=UUID(int=3), record_ref="harbor:other")
+    assert reader().validate_citation(wrong_ref).status is EvidenceStatus.MISALIGNED
+    changed = receipt().model_copy(update={"attempt_id": UUID(int=99)})
+    assert (
+        reader((changed,)).validate_citation(citation()).status
+        is EvidenceStatus.MISALIGNED
     )
-    result = reader.read_verifier_result(wrong)
-    assert result.status is EvidenceStatus.FORBIDDEN
+
+
+def test_incomplete_cleanup_or_unverified_outcome_blocks_record() -> None:
+    unverified = receipt(cleanup_complete=False, outcome=RunOutcome.UNVERIFIED)
+    result = reader((unverified,)).validate_citation(citation())
+    assert result.status is EvidenceStatus.INCOMPLETE
     assert not result.complete
-
-
-def test_incomplete_cleanup_blocks_all_run_aligned_evidence() -> None:
-    reader = RunEvidenceReader(
-        (receipt(cleanup_complete=False, outcome=RunOutcome.UNVERIFIED),)
-    )
-    assert (
-        reader.read_run_record(query(RunEvidenceKind.RUN_RECORD)).status
-        is EvidenceStatus.INCOMPLETE
-    )
-    assert (
-        reader.read_verifier_result(query(RunEvidenceKind.VERIFIER_RESULT)).status
-        is EvidenceStatus.INCOMPLETE
-    )
-
-
-def test_unverified_outcome_and_wrong_kind_never_resolve() -> None:
-    reader = RunEvidenceReader((receipt(outcome=RunOutcome.UNVERIFIED),))
-    assert (
-        reader.read_verifier_result(query(RunEvidenceKind.VERIFIER_RESULT)).status
-        is EvidenceStatus.INCOMPLETE
-    )
-    assert (
-        reader.read_verifier_result(query(RunEvidenceKind.RUN_RECORD)).status
-        is EvidenceStatus.FORBIDDEN
-    )
