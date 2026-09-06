@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from .neatlogs_capture import RunLink
 
-NeatlogsTraceRef = NewType("NeatlogsTraceRef", str)
 NeatlogsSpanRef = NewType("NeatlogsSpanRef", str)
 
 
@@ -66,24 +65,29 @@ class _McpEnvelope(BaseModel):
     result: _McpResult
 
 
-class _TraceNode(BaseModel):
+class _McpV2Span(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
     span_id: str = Field(min_length=1, max_length=200)
-    span_type: str
+    parent_span_id: str | None = None
     name: str
-    status: str
-    input: object | None = None
-    output: object | None = None
+    type: str
+    input_value: str | None = None
+    output_value: str | None = None
     metadata: RunLink | None = None
-    children: tuple["_TraceNode", ...] = ()
 
 
 class _TraceContext(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
     trace_id: str = Field(min_length=1, max_length=200)
-    status: Literal["success", "error"]
-    root_span: _TraceNode
-    span_count: int = Field(ge=1)
+    status: Literal["success", "error", "processing"]
+    finalization_status: Literal["finalized", "pending"] | None = None
+    verification_ready: bool = False
+    span_payload_complete: bool = False
+    span_tree_complete: bool = False
+    spans: tuple[_McpV2Span, ...] = ()
+    span_count: int = Field(default=0, ge=0)
+    returned_span_count: int = Field(default=0, ge=0)
+    root_span_count: int = Field(default=0, ge=0)
     truncated: bool = False
 
 
@@ -97,11 +101,6 @@ class NeatlogsReadbackReader:
         self._endpoint = endpoint.rstrip("/") + "/mcp"
         self._session_id: str | None = None
 
-    def read(
-        self, link: RunLink, trace_ref: NeatlogsTraceRef
-    ) -> NeatlogsReadbackReceipt:
-        raise ValueError("Expected span coverage is required")
-
     def fetch(self, expected: ExpectedTrace) -> NeatlogsReadbackReceipt:
         payload = self._tool(
             "get_trace_context", json.dumps({"trace_id": expected.trace_ref})
@@ -110,11 +109,22 @@ class NeatlogsReadbackReader:
             context = _TraceContext.model_validate_json(payload)
         except ValueError:
             return self._receipt(expected, False, False, ())
-        spans = self._spans(context.root_span)
+        spans = tuple(
+            ReadbackSpan(
+                span_id=span.span_id,
+                parent_span_id=span.parent_span_id,
+                node_name=span.name,
+                node_type=span.type,
+                input_text=span.input_value,
+                output_text=span.output_value,
+            )
+            for span in context.spans
+        )
+        finalized = self._finalized(context)
         return self._receipt(
             expected,
-            context.status == "success",
-            self._complete(expected, context, spans),
+            finalized,
+            self._complete(expected, context, spans, finalized),
             spans,
             payload,
         )
@@ -196,36 +206,38 @@ class NeatlogsReadbackReader:
         expected: ExpectedTrace,
         context: _TraceContext,
         spans: tuple[ReadbackSpan, ...],
+        finalized: bool,
     ) -> bool:
+        return all(
+            (
+                context.trace_id == expected.trace_ref,
+                finalized,
+                not context.truncated,
+                len(spans) == context.span_count,
+                context.returned_span_count == context.span_count,
+                context.root_span_count == 1,
+                len({span.span_id for span in spans}) == len(spans),
+                expected.link
+                == next(
+                    (
+                        span.metadata
+                        for span in context.spans
+                        if span.parent_span_id is None
+                    ),
+                    None,
+                ),
+                set(expected.expected_span_refs) == {span.span_id for span in spans},
+            )
+        )
+
+    def _finalized(self, context: _TraceContext) -> bool:
         return (
-            context.trace_id == expected.trace_ref
-            and context.status == "success"
-            and not context.truncated
-            and len(spans) == context.span_count
-            and len({span.span_id for span in spans}) == len(spans)
-            and expected.link == context.root_span.metadata
-            and set(expected.expected_span_refs) == {span.span_id for span in spans}
+            context.status == "success"
+            and context.finalization_status == "finalized"
+            and context.verification_ready
+            and context.span_payload_complete
+            and context.span_tree_complete
         )
-
-    def _spans(
-        self, node: _TraceNode, parent: str | None = None
-    ) -> tuple[ReadbackSpan, ...]:
-        current = ReadbackSpan(
-            span_id=node.span_id,
-            parent_span_id=parent,
-            node_name=node.name,
-            node_type=node.span_type,
-            input_text=self._text(node.input),
-            output_text=self._text(node.output),
-        )
-        return (current,) + tuple(
-            span for child in node.children for span in self._spans(child, node.span_id)
-        )
-
-    def _text(self, value: object | None) -> str | None:
-        if value is None or isinstance(value, str):
-            return value
-        return json.dumps(value, sort_keys=True)
 
     def _receipt(
         self,
