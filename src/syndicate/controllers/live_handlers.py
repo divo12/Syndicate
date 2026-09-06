@@ -112,9 +112,10 @@ async def _run_trial(
         run_id=trial.id,
         task_id=command.task_id,
     )
-    trial.agent.bind_controller_receipt(binding, run)
+    control_root = run.parent.parent
+    trial.agent.bind_controller_receipt(binding, control_root)
     result = await trial.run()
-    cleanup = load_cleanup_receipt(binding, run)
+    cleanup = load_cleanup_receipt(binding, control_root)
     return postprocess_stock_result(
         binding, cleanup, result, "harbor:trial:" + str(trial.id)
     )
