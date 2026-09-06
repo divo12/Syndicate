@@ -1,5 +1,6 @@
 """Harbor-side lifecycle boundary for the unprivileged NexAU process."""
 
+import asyncio
 from pathlib import Path
 
 from harbor.environments.base import BaseEnvironment
@@ -18,9 +19,18 @@ class CleanupReceipt(BaseModel):
 class HarborAgent:
     """Runs Agent A before verifier files exist, then clears its whole UID."""
 
-    def __init__(self, environment: BaseEnvironment, *, uid: int = 10001) -> None:
+    def __init__(
+        self,
+        environment: BaseEnvironment,
+        *,
+        uid: int = 10001,
+        cleanup_timeout_ms: int = 1_000,
+    ) -> None:
+        if type(cleanup_timeout_ms) is not int or cleanup_timeout_ms <= 0:
+            raise ValueError("Positive cleanup timeout required")
         self.environment = environment
         self.uid = uid
+        self.cleanup_timeout_ms = cleanup_timeout_ms
 
     async def assert_hidden_files_absent(self) -> None:
         await self.environment.exec(
@@ -42,10 +52,17 @@ class HarborAgent:
         await self.environment.exec(
             command=f"pkill -KILL -u {self.uid} || true", user="root"
         )
-        result = await self.environment.exec(
-            command=f"! pgrep -u {self.uid}", user="root"
-        )
-        return CleanupReceipt(uid=self.uid, complete=result.return_code == 0)
+        deadline = asyncio.get_running_loop().time() + self.cleanup_timeout_ms / 1000
+        settled = 0
+        while asyncio.get_running_loop().time() < deadline:
+            result = await self.environment.exec(
+                command=f"pgrep -u {self.uid}", user="root"
+            )
+            settled = settled + 1 if result.return_code == 1 else 0
+            if settled == 2:
+                return CleanupReceipt(uid=self.uid, complete=True)
+            await asyncio.sleep(0.05)
+        return CleanupReceipt(uid=self.uid, complete=False)
 
 
 def runtime_command(request_path: Path = Path("/run/syndicate/request.json")) -> str:

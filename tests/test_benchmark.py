@@ -12,6 +12,9 @@ from syndicate.benchmark import (
     classify_verifier,
     verify,
 )
+from syndicate.harbor_agent import CleanupReceipt
+
+CLEANUP = CleanupReceipt(uid=10001, complete=True)
 
 
 @pytest.mark.parametrize(
@@ -57,6 +60,7 @@ def test_run_receipt_rejects_verifier_outcome_mismatch() -> None:
             run_id=uuid4(),
             task_id="task-a-1",
             cleanup_complete=True,
+            cleanup=CLEANUP,
             outcome=RunOutcome.FAIL,
             verifier=verifier,
         )
@@ -76,6 +80,36 @@ def test_run_receipt_blocks_verified_outcome_without_cleanup() -> None:
             run_id=uuid4(),
             task_id="task-a-1",
             cleanup_complete=False,
+            cleanup=CleanupReceipt(uid=10001, complete=False),
             outcome=RunOutcome.FAIL,
+            verifier=verifier,
+        )
+
+
+def test_verifier_receipt_rejects_inconsistent_reward() -> None:
+    with pytest.raises(ValueError, match="reason"):
+        VerifierReceipt(
+            outcome=RunOutcome.PASS,
+            reason=VerifierReason.PASSED,
+            reward=0.0,
+            raw_result_ref="harbor:opaque",
+        )
+
+
+def test_run_receipt_rejects_mismatched_cleanup_flag() -> None:
+    verifier = VerifierReceipt(
+        outcome=RunOutcome.UNVERIFIED,
+        reason=VerifierReason.VERIFIER_ERROR,
+        raw_result_ref="harbor:opaque",
+    )
+    with pytest.raises(ValueError, match="Cleanup flag"):
+        RunReceipt(
+            operation_id=uuid4(),
+            attempt_id=uuid4(),
+            run_id=uuid4(),
+            task_id="task-a-1",
+            cleanup_complete=True,
+            cleanup=CleanupReceipt(uid=10001, complete=False),
+            outcome=RunOutcome.UNVERIFIED,
             verifier=verifier,
         )

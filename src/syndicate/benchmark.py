@@ -11,6 +11,8 @@ from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.verifier import Verifier
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from syndicate.harbor_agent import CleanupReceipt
+
 
 class RunOutcome(StrEnum):
     PASS = "pass"
@@ -25,6 +27,7 @@ class VerifierReason(StrEnum):
     MISSING_RESULT = "missing_result"
     UNSUPPORTED_REWARD = "unsupported_reward"
     VERIFIER_ERROR = "verifier_error"
+    CLEANUP_INCOMPLETE = "cleanup_incomplete"
 
 
 class VerifierReceipt(BaseModel):
@@ -37,6 +40,18 @@ class VerifierReceipt(BaseModel):
     reward: float | None = None
     raw_result_ref: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        expected = {
+            RunOutcome.PASS: (VerifierReason.PASSED, 1.0),
+            RunOutcome.FAIL: (VerifierReason.FAILED, 0.0),
+        }.get(self.outcome)
+        if expected is not None and (self.reason, self.reward) != expected:
+            raise ValueError("Verifier outcome, reason, and reward must agree")
+        if self.outcome is RunOutcome.UNVERIFIED and self.reward is not None:
+            raise ValueError("Unverified verifier receipt cannot carry a reward")
+        return self
+
 
 class RunReceipt(BaseModel):
     """Terminal trusted outcome for a run; trajectory data stays in Neatlogs."""
@@ -48,6 +63,7 @@ class RunReceipt(BaseModel):
     run_id: UUID
     task_id: str = Field(min_length=1)
     cleanup_complete: bool
+    cleanup: CleanupReceipt
     outcome: RunOutcome
     verifier: VerifierReceipt
 
@@ -55,6 +71,8 @@ class RunReceipt(BaseModel):
     def coherent(self) -> Self:
         if self.verifier.outcome is not self.outcome:
             raise ValueError("Verifier outcome must match run outcome")
+        if self.cleanup_complete is not self.cleanup.complete:
+            raise ValueError("Cleanup flag must match cleanup proof")
         if (
             self.outcome in (RunOutcome.PASS, RunOutcome.FAIL)
             and not self.cleanup_complete
@@ -103,8 +121,15 @@ async def verify_with_harbor(
     paths: TrialPaths,
     environment: BaseEnvironment,
     raw_result_ref: str,
+    cleanup: CleanupReceipt,
 ) -> VerifierReceipt:
     """Invoke Harbor's unmodified verifier after P08c cleanup succeeds."""
+    if not cleanup.complete:
+        return VerifierReceipt(
+            outcome=RunOutcome.UNVERIFIED,
+            reason=VerifierReason.CLEANUP_INCOMPLETE,
+            raw_result_ref=raw_result_ref,
+        )
     return await verify(Verifier(task, paths, environment), raw_result_ref)
 
 
