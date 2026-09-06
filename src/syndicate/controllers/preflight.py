@@ -6,7 +6,14 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from syndicate.models.commands import CommandRequest, parse_command
+from syndicate.controllers.pure_handlers import collect, compare, select
+from syndicate.models.commands import (
+    CollectReportsCommand,
+    CommandRequest,
+    CompareHarnessCommand,
+    SelectHarnessCommand,
+    parse_command,
+)
 from syndicate.models.envelope import (
     ArtifactRef,
     Command,
@@ -16,6 +23,7 @@ from syndicate.models.envelope import (
     ErrorReason,
     PreflightCommand,
 )
+from syndicate.repositories.artifact_store import ArtifactStore
 from syndicate.services.preflight import (
     AdmissionError,
     ControllerConfig,
@@ -132,6 +140,22 @@ def operator_preflight(config_file: Path, root: Path) -> tuple[CommandReceipt, i
         ), 2
 
 
+def execute_pure(command: CommandRequest, root: Path) -> CommandReceipt:
+    controller = ControllerConfig.model_validate_json(
+        (root / "controller.json").read_bytes()
+    )
+    if command.content_hash not in controller.approved_request_hashes:
+        raise ValueError("Controller did not approve this command request")
+    store = ArtifactStore(root)
+    if isinstance(command, CollectReportsCommand):
+        return collect(command, store)
+    if isinstance(command, CompareHarnessCommand):
+        return compare(command, store)
+    if isinstance(command, SelectHarnessCommand):
+        return select(command, store)
+    raise ValueError("Command handler is not installed")
+
+
 def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     try:
         root = Path.cwd().resolve() / ".syndicate"
@@ -144,9 +168,9 @@ def dispatch(arguments: list[str]) -> tuple[CommandReceipt, int]:
     except (OSError, ValueError):
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, None), 2
     try:
-        if not isinstance(command, PreflightCommand):
-            raise ValueError("Command handler is not installed")
-        return execute(command, run, root), 0
+        if isinstance(command, PreflightCommand):
+            return execute(command, run, root), 0
+        return execute_pure(command, root), 0
     except AdmissionError:
         return failure(CommandStatus.FAILED, ErrorReason.INVALID_REQUEST, command), 2
     except (OSError, InfrastructureError):
