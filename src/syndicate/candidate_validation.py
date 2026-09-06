@@ -14,6 +14,12 @@ class CandidateValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class _CandidateFile:
+    path: str
+    content: bytes
+
+
+@dataclass(frozen=True)
 class CandidateSeal:
     parent_hash: str
     candidate_hash: str
@@ -28,13 +34,17 @@ def seal_candidate(workspace: CandidateWorkspace) -> CandidateSeal:
     unexpected = set(candidate_paths) - allowed_paths
     if unexpected:
         raise CandidateValidationError("candidate changed a protected path")
+    candidate_files = _snapshot_candidate_files(
+        workspace.candidate_root, candidate_paths
+    )
     changed = tuple(
         path.as_posix()
         for path in workspace.allowed_paths
-        if _different(workspace, path.as_posix())
+        if _content_for(candidate_files, path.as_posix())
+        != (workspace.snapshot_root / path).read_bytes()
     )
-    candidate_hash = _hash_files(workspace.candidate_root, candidate_paths)
-    diff_hash = _hash_diff(workspace, changed)
+    candidate_hash = _hash_files(candidate_files)
+    diff_hash = _hash_diff(workspace, candidate_files, changed)
     return CandidateSeal(
         parent_hash=workspace.candidate_parent_hash,
         candidate_hash=candidate_hash,
@@ -53,33 +63,45 @@ def _candidate_files(root: Path) -> tuple[str, ...]:
     )
 
 
-def _different(workspace: CandidateWorkspace, relative_path: str) -> bool:
-    candidate_content = _read_candidate_file(workspace.candidate_root, relative_path)
-    return (
-        candidate_content is None
-        or candidate_content != (workspace.snapshot_root / relative_path).read_bytes()
-    )
-
-
-def _hash_files(root: Path, paths: tuple[str, ...]) -> str:
-    digest = hashlib.sha256()
-    for relative_path in paths:
-        digest.update(relative_path.encode())
-        digest.update(b"\0")
-        content = _read_candidate_file(root, relative_path)
+def _snapshot_candidate_files(
+    root: Path, paths: tuple[str, ...]
+) -> tuple[_CandidateFile, ...]:
+    files: list[_CandidateFile] = []
+    for path in paths:
+        content = _read_candidate_file(root, path)
         if content is None:
             raise CandidateValidationError("candidate file disappeared during sealing")
-        digest.update(content)
+        files.append(_CandidateFile(path=path, content=content))
+    return tuple(files)
+
+
+def _content_for(files: tuple[_CandidateFile, ...], path: str) -> bytes | None:
+    for file in files:
+        if file.path == path:
+            return file.content
+    return None
+
+
+def _hash_files(files: tuple[_CandidateFile, ...]) -> str:
+    digest = hashlib.sha256()
+    for file in files:
+        digest.update(file.path.encode())
+        digest.update(b"\0")
+        digest.update(file.content)
         digest.update(b"\0")
     return digest.hexdigest()
 
 
-def _hash_diff(workspace: CandidateWorkspace, paths: tuple[str, ...]) -> str:
+def _hash_diff(
+    workspace: CandidateWorkspace,
+    files: tuple[_CandidateFile, ...],
+    paths: tuple[str, ...],
+) -> str:
     digest = hashlib.sha256(workspace.candidate_parent_hash.encode())
     for relative_path in paths:
         digest.update(relative_path.encode())
         digest.update(b"\0")
-        content = _read_candidate_file(workspace.candidate_root, relative_path)
+        content = _content_for(files, relative_path)
         if content is not None:
             digest.update(content)
         else:

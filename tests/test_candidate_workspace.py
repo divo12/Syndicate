@@ -107,3 +107,24 @@ def test_seal_rechecks_for_symlinks_after_initial_scan(
 
     with pytest.raises(CandidateValidationError, match="symlink"):
         seal_candidate(workspace)
+
+
+def test_seal_reuses_one_candidate_content_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    reads: list[str] = []
+    contents = (b"candidate", b"other", b"third")
+
+    def changing_read(_root: Path, path: str) -> bytes:
+        reads.append(path)
+        return contents[len(reads) - 1]
+
+    monkeypatch.setattr(candidate_validation, "_read_candidate_file", changing_read)
+
+    seal = seal_candidate(workspace)
+
+    assert reads == ["prompt.md"]
+    assert seal.changed_paths == ("prompt.md",)
