@@ -4,17 +4,13 @@ import tempfile
 from logging import Logger
 from pathlib import Path, PurePosixPath
 from typing import override
-from uuid import UUID
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import MCPServerConfig
-from harbor.models.verifier.result import VerifierResult
-from harbor.verifier.base import BaseVerifier
 from pydantic import SecretStr
 
-from syndicate.benchmark import verify_with_harbor
 from syndicate.harbor_agent import CleanupReceipt, HarborAgent, runtime_command
 from syndicate.runtime_contracts import RuntimeRequest
 
@@ -22,30 +18,6 @@ REQUEST_PATH = "/run/syndicate/request.json"
 KEY_PATH = "/run/syndicate/api-key"
 HARNESS_PATH = "/run/syndicate/harness"
 HARNESS_SOURCE = Path(__file__).parents[2] / "harnesses/seed"
-
-
-class _CleanupProofs:
-    """Transient handoff between Harbor's sequential agent and verifier phases."""
-
-    _receipts: list[tuple[UUID, CleanupReceipt]] = []
-
-    @classmethod
-    def record(cls, environment: BaseEnvironment, receipt: CleanupReceipt) -> None:
-        context_id = environment.context_id
-        if context_id is None:
-            raise RuntimeError("Harbor trial context is required for verification")
-        cls._receipts[:] = [item for item in cls._receipts if item[0] != context_id]
-        cls._receipts.append((context_id, receipt))
-
-    @classmethod
-    def take(cls, environment: BaseEnvironment) -> CleanupReceipt | None:
-        context_id = environment.context_id
-        if context_id is None:
-            return None
-        for index, item in enumerate(cls._receipts):
-            if item[0] == context_id:
-                return cls._receipts.pop(index)[1]
-        return None
 
 
 class SyndicateNexAUAgent(BaseAgent):
@@ -113,28 +85,3 @@ class SyndicateNexAUAgent(BaseAgent):
         if instruction != self.request.instruction:
             raise ValueError("Harbor instruction differs from approved runtime request")
         self.cleanup_receipt = await HarborAgent(environment).run(runtime_command())
-        _CleanupProofs.record(environment, self.cleanup_receipt)
-
-
-class SyndicateHarborVerifier(BaseVerifier):
-    """Harbor verifier registration that consumes the agent's settled cleanup proof."""
-
-    @classmethod
-    def import_path(cls) -> str:
-        return f"{cls.__module__}:{cls.__name__}"
-
-    @override
-    async def verify(self) -> VerifierResult:
-        cleanup = _CleanupProofs.take(self.environment)
-        if cleanup is None or self.environment.context_id is None:
-            return VerifierResult()
-        receipt = await verify_with_harbor(
-            self.task,
-            self.trial_paths,
-            self.environment,
-            f"harbor:{self.environment.context_id}",
-            cleanup,
-        )
-        return VerifierResult(
-            rewards={"reward": receipt.reward} if receipt.reward is not None else None
-        )

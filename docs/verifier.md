@@ -1,14 +1,14 @@
 # Trusted verifier receipt
 
-P09 invokes Harbor's original `Verifier` only after P08c confirms whole-UID
-cleanup. Only its sole numeric `reward` of `0` or `1` maps to `fail` or `pass`;
-missing, malformed, multi-valued, fractional, and exceptional results are
-`unverified`. Receipts retain an opaque Harbor result reference, never output.
+The direct `verify_with_harbor` library API requires a P08c whole-UID cleanup
+receipt before it invokes Harbor's original `Verifier`. Only its sole numeric
+`reward` of `0` or `1` maps to `fail` or `pass`; all other results are
+`unverified`. Native Harbor Trial verification stays framework-owned.
 
 ```mermaid
 flowchart LR
-  C[UID cleanup receipt] --> H[Harbor Verifier]
+  C[UID cleanup receipt] --> H[direct Harbor Verifier API]
   H --> R[typed nonpayload receipt]
 ```
 
-Depends on P08c / #21. This 136-LOC slice is below the 500-LOC limit.
+Depends on P08c / #21. The direct API never replaces native Trial verification.

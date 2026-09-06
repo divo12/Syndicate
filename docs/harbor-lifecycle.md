@@ -7,8 +7,9 @@ trace, shell payload, or final-response file; P10 owns the Neatlogs SDK export.
 
 ```mermaid
 flowchart LR
-  A[UID 10001 Agent A] --> C[whole-UID cleanup]
-  C --> V[Harbor verifier]
+  A[UID 10001 SyndicateNexAUAgent.run] --> C[whole-UID cleanup]
+  C --> R[return to Harbor]
+  R --> V[Harbor framework original verifier]
 ```
 
-Depends on P08b and P07b. P09 may inject verifier files only after `complete=true`.
+Depends on P08b and P07b. P09 receives a separate cleanup-gated library API.
