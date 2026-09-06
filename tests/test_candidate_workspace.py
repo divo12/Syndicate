@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import syndicate.candidate_validation as candidate_validation
 from syndicate.candidate_validation import CandidateValidationError, seal_candidate
 from syndicate.candidate_workspace import create_candidate_workspace
 
@@ -82,4 +83,27 @@ def test_seal_rejects_protected_paths_and_symlink_traversal(
         target.write_text("protected edit")
 
     with pytest.raises(CandidateValidationError):
+        seal_candidate(workspace)
+
+
+def test_seal_rechecks_for_symlinks_after_initial_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = create_candidate_workspace(
+        _incumbent(tmp_path), ("prompt.md",), tmp_path / "workspaces"
+    )
+    original_files = candidate_validation._candidate_files
+    external_file = tmp_path / "external.txt"
+    external_file.write_text("outside", encoding="utf-8")
+
+    def swap_after_scan(root: Path) -> tuple[str, ...]:
+        paths = original_files(root)
+        candidate = root / "prompt.md"
+        candidate.unlink()
+        candidate.symlink_to(external_file)
+        return paths
+
+    monkeypatch.setattr(candidate_validation, "_candidate_files", swap_after_scan)
+
+    with pytest.raises(CandidateValidationError, match="symlink"):
         seal_candidate(workspace)
